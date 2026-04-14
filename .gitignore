@@ -1,0 +1,20 @@
+# PowerShell / editor
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Generated audit outputs
+output/
+reports/
+RC4_Accounts_*.csv
+RC4_EventLog_*.csv
+RC4_GPO_*.csv
+RC4_Summary_*.csv
+RC4_Master_*.csv
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
