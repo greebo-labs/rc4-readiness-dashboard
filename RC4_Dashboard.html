@@ -1,0 +1,2132 @@
+<!DOCTYPE html>
+<!--
+  RC4 Deprecation Readiness Dashboard
+  Version  : 1.1
+  Author   : Darren Reevell, Senior Platform Engineer — Intertek Group plc
+  Purpose  : Visualises Active Directory RC4 encryption exposure data produced by
+             Invoke-RC4Audit.ps1. Provides executive summary, per-domain breakdown,
+             object-level detail, KDC event log analysis, GPO audit and a
+             structured remediation plan with verified PowerShell commands.
+  Usage    : Open in a modern browser (Chrome/Edge recommended).
+             Load the RC4_Master_YYYYMMDD_HHMMSS.csv produced by the audit script.
+  Audience : Platform Engineering / Identity Team — INTERNAL USE ONLY
+  Updated  : April 2026
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self' https://cdnjs.cloudflare.com https://fonts.googleapis.com https://fonts.gstatic.com;
+               script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com;
+               style-src  'self' 'unsafe-inline' https://fonts.googleapis.com;
+               font-src   https://fonts.gstatic.com;
+               img-src    'self' data:;
+               connect-src 'none';">
+<title>RC4 Deprecation Readiness Dashboard v1.1</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  background: #f3f4f6;
+  color: #1f2937;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ── Top bar ── */
+.topbar {
+  background: #1e2330;
+  color: #fff;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  justify-content: space-between;
+  flex-shrink: 0;
+  z-index: 200;
+  position: sticky;
+  top: 0;
+}
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+.topbar-logo {
+  display: flex; gap: 3px; flex-wrap: wrap; width: 18px;
+}
+.topbar-logo span {
+  width: 7px; height: 7px; border-radius: 1px;
+  background: #4f8ef7;
+}
+.topbar-logo span:nth-child(2) { background: #e05c4b; }
+.topbar-logo span:nth-child(3) { background: #f5c542; }
+.topbar-logo span:nth-child(4) { background: #4caf50; }
+.topbar-title { font-size: 14px; font-weight: 600; letter-spacing: -0.2px; }
+.topbar-version { font-size: 11px; color: #94a3b8; margin-left: 4px; }
+.topbar-right { display: flex; align-items: center; gap: 16px; font-size: 11px; color: #94a3b8; }
+.topbar-refresh { color: #4ade80; display: flex; align-items: center; gap: 5px; }
+.topbar-refresh svg { width: 13px; height: 13px; }
+
+/* ── Layout ── */
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;   /* allows flex children to shrink below content size */
+}
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 190px;
+  background: #1e2330;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  padding: 16px 0;
+  overflow-y: auto;
+  position: sticky;
+  top: 44px;
+  height: calc(100vh - 44px);
+}
+.sidebar-nav { flex: 1; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  font-size: 12.5px;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  border-left: 3px solid transparent;
+  text-decoration: none;
+}
+.nav-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.7; }
+.nav-item:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; }
+.nav-item.active {
+  background: rgba(79,142,247,0.12);
+  color: #fff;
+  border-left-color: #4f8ef7;
+  font-weight: 600;
+}
+.nav-item.active svg { opacity: 1; }
+
+.sidebar-section {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #475569;
+  padding: 16px 16px 6px;
+}
+
+.upload-item {
+  padding: 6px 16px;
+  font-size: 11px;
+}
+.upload-btn-side {
+  display: flex; align-items: center; gap: 7px;
+  color: #94a3b8; cursor: pointer; padding: 5px 0;
+  transition: color 0.15s;
+}
+.upload-btn-side:hover { color: #e2e8f0; }
+.upload-btn-side svg { width: 13px; height: 13px; }
+.uploaded-filename {
+  color: #4f8ef7;
+  font-size: 10px;
+  font-family: 'Inter', monospace;
+  padding: 3px 0 0 20px;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.analyse-btn {
+  margin: 8px 16px 4px;
+  background: #4f8ef7;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  width: calc(100% - 32px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.15s;
+}
+.analyse-btn:hover { background: #3b7de8; }
+.analyse-btn svg { width: 13px; height: 13px; }
+
+.sidebar-footer-section { padding: 12px 16px 0; }
+.sidebar-footer-lbl { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #475569; }
+.sidebar-footer-val { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+.sidebar-footer-sub { font-size: 10px; color: #475569; margin-top: 2px; }
+
+/* ── Main content ── */
+.main {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 0 60px 0;
+  min-width: 0;
+  background: #f3f4f6;  /* explicit — prevents browser-default white showing as gap */
+}
+
+/* ── Alert banner ── */
+.alert-banner {
+  background: #fff3f3;
+  border: 1px solid #fca5a5;
+  border-left: 4px solid #ef4444;
+  margin: 0 20px 12px;    /* no top margin — padding-top on dashContent handles spacing */
+  padding: 10px 14px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: #7f1d1d;
+}
+.alert-banner svg { width: 16px; height: 16px; flex-shrink: 0; color: #ef4444; }
+.alert-banner .close-btn {
+  margin-left: auto; cursor: pointer; color: #9ca3af;
+  background: none; border: none; font-size: 16px; line-height: 1;
+}
+.alert-banner.hidden { display: none; }
+
+/* ── KPI strip ── */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0;
+  margin: 0 20px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+.kpi-card {
+  padding: 16px 18px;
+  border-right: 1px solid #e5e7eb;
+  border-top: 3px solid transparent;
+  position: relative;
+}
+.kpi-card:last-child { border-right: none; }
+.kpi-card.neutral  { border-top-color: #6b7280; }
+.kpi-card.orange   { border-top-color: #f97316; }
+.kpi-card.green    { border-top-color: #22c55e; }
+.kpi-card.red      { border-top-color: #ef4444; }
+.kpi-card.amber    { border-top-color: #f59e0b; }
+
+.kpi-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-bottom: 4px;
+  letter-spacing: -0.5px;
+}
+.kpi-card.neutral .kpi-value { color: #111827; }
+.kpi-card.orange  .kpi-value { color: #f97316; }
+.kpi-card.green   .kpi-value { color: #16a34a; }
+.kpi-card.red     .kpi-value { color: #dc2626; }
+.kpi-card.amber   .kpi-value { color: #d97706; }
+
+.kpi-label { font-size: 11.5px; color: #6b7280; margin-bottom: 10px; }
+
+.export-csv-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #374151;
+  background: #fff;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.15s, border-color 0.15s;
+}
+.export-csv-btn:hover { background: #f9fafb; border-color: #d1d5db; }
+
+/* ── Section heading + content card ── */
+.content-pad { padding: 0 20px; }
+.section-row {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.section-row.two-col { grid-template-columns: 1fr 1fr; }
+.section-row.three-col { grid-template-columns: 2fr 1.2fr 1.2fr; }
+.section-row.one-col { grid-template-columns: 1fr; }
+
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 16px 18px;
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+.card-sub { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+
+/* ── Executive summary card ── */
+.exec-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin: 0 20px 16px;
+  padding: 16px 20px;
+}
+.exec-card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.exec-card-title { font-size: 14px; font-weight: 700; color: #111827; }
+.risk-pill {
+  font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+.risk-pill.critical { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; }
+.risk-pill.high     { background: #fff7ed; color: #ea580c; border: 1px solid #fdba74; }
+.risk-pill.medium   { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+.risk-pill.ok       { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+.exec-body { font-size: 12.5px; color: #4b5563; line-height: 1.75; }
+.exec-body strong { color: #111827; font-weight: 600; }
+.exec-body code {
+  background: #f3f4f6; padding: 1px 5px; border-radius: 3px;
+  font-family: 'Courier New', monospace; font-size: 11px; color: #374151;
+}
+
+/* ── Page sections nav tabs (inside main) ── */
+.page-tabs {
+  display: flex;
+  border-bottom: 1px solid #e5e7eb;
+  margin: 0 20px 16px;
+  padding-top: 8px;
+}
+.page-tab {
+  padding: 8px 16px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s;
+}
+.page-tab.active { color: #4f8ef7; border-bottom-color: #4f8ef7; font-weight: 600; }
+.page-tab:hover { color: #374151; }
+
+/* ── Tab panels ── */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── Chart containers ── */
+.chart-wrap { position: relative; }
+
+/* ── Domain breakdown table style ── */
+.domain-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+}
+.domain-mini-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 12px 14px;
+  background: #fafafa;
+}
+.domain-mini-name {
+  font-size: 12px; font-weight: 600; color: #4f8ef7;
+  margin-bottom: 8px; font-family: 'Courier New', monospace;
+}
+.domain-mini-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.domain-mini-stat { text-align: center; }
+.domain-mini-val { font-size: 18px; font-weight: 700; }
+.domain-mini-lbl { font-size: 10px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; }
+.prog-bar-wrap { margin-top: 8px; }
+.prog-bar-lbl { display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-bottom: 3px; }
+.prog-bar { height: 5px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+.prog-fill { height: 100%; border-radius: 3px; }
+
+/* ── Table ── */
+.tbl-controls {
+  display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center;
+}
+.tbl-search {
+  flex: 1; min-width: 180px;
+  border: 1px solid #e5e7eb; border-radius: 4px;
+  padding: 6px 11px; font-size: 12px; font-family: 'Inter', sans-serif;
+  color: #374151; outline: none; transition: border-color 0.15s;
+}
+.tbl-search:focus { border-color: #4f8ef7; }
+.tbl-select {
+  border: 1px solid #e5e7eb; border-radius: 4px;
+  padding: 6px 10px; font-size: 12px; font-family: 'Inter', sans-serif;
+  color: #374151; outline: none; background: #fff; cursor: pointer;
+}
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+thead tr { border-bottom: 2px solid #e5e7eb; }
+th {
+  text-align: left; padding: 8px 12px;
+  font-size: 11px; font-weight: 600; color: #6b7280;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  cursor: pointer; white-space: nowrap;
+  transition: color 0.15s;
+}
+th:hover { color: #374151; }
+tbody tr { border-bottom: 1px solid #f3f4f6; }
+tbody tr:hover { background: #f9fafb; }
+td { padding: 8px 12px; color: #374151; }
+td.acct-name { font-weight: 600; color: #111827; }
+td.domain-col { color: #4f8ef7; font-family: 'Courier New', monospace; font-size: 11px; }
+
+.badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 7px; border-radius: 4px;
+  font-size: 10px; font-weight: 600;
+}
+.badge-critical { background: #fef2f2; color: #dc2626; }
+.badge-high     { background: #fff7ed; color: #ea580c; }
+.badge-medium   { background: #fffbeb; color: #ca8a04; }
+.badge-low      { background: #f0fdf4; color: #16a34a; }
+.badge-user     { background: #eff6ff; color: #2563eb; }
+.badge-computer { background: #f0f9ff; color: #0284c7; }
+.badge-svc      { background: #fffbeb; color: #d97706; }
+.badge-gmsa     { background: #f0fdf4; color: #16a34a; }
+.badge-rc4      { background: #fef2f2; color: #dc2626; }
+.badge-aes      { background: #f0fdf4; color: #16a34a; }
+
+.tbl-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid #f3f4f6;
+  font-size: 11px; color: #9ca3af;
+}
+.pagination { display: flex; gap: 3px; }
+.pg-btn {
+  border: 1px solid #e5e7eb; border-radius: 4px;
+  padding: 3px 9px; font-size: 11px; cursor: pointer;
+  background: #fff; color: #374151; font-family: 'Inter', sans-serif;
+  transition: all 0.15s;
+}
+.pg-btn:hover, .pg-btn.active { border-color: #4f8ef7; color: #4f8ef7; background: #eff6ff; }
+
+/* ── Remediation cards ── */
+.action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.action-card {
+  border: 1px solid #e5e7eb; border-radius: 6px;
+  padding: 14px 16px;
+  background: #fff;
+  border-left: 4px solid #e5e7eb;
+}
+.action-card.p1 { border-left-color: #dc2626; }
+.action-card.p2 { border-left-color: #f97316; }
+.action-card.p3 { border-left-color: #4f8ef7; }
+.action-card.p4 { border-left-color: #22c55e; }
+.action-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.action-pill {
+  font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 3px;
+}
+.p1 .action-pill { background: #fef2f2; color: #dc2626; }
+.p2 .action-pill { background: #fff7ed; color: #ea580c; }
+.p3 .action-pill { background: #eff6ff; color: #2563eb; }
+.p4 .action-pill { background: #f0fdf4; color: #16a34a; }
+.action-title { font-size: 13px; font-weight: 600; color: #111827; }
+.action-body { font-size: 12px; color: #6b7280; line-height: 1.7; }
+.action-body strong { color: #374151; }
+.action-cmd {
+  background: #1e2330; color: #a5b4fc;
+  border-radius: 4px; padding: 8px 12px;
+  margin-top: 10px; font-size: 10.5px;
+  font-family: 'Courier New', monospace;
+  overflow-x: auto; white-space: pre;
+  line-height: 1.5;
+}
+
+/* ── Upload drop zone ── */
+.drop-zone-page {
+  display: flex; align-items: center; justify-content: center;
+  min-height: calc(100vh - 104px); flex-direction: column; gap: 0;
+}
+.drop-zone {
+  border: 2px dashed #d1d5db;
+  border-radius: 8px;
+  padding: 48px 64px;
+  text-align: center;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 460px;
+}
+.drop-zone:hover, .drop-zone.drag { border-color: #4f8ef7; background: #eff6ff; }
+.drop-zone-icon { font-size: 40px; margin-bottom: 14px; }
+.drop-zone h2 { font-size: 16px; font-weight: 600; color: #111827; margin-bottom: 8px; }
+.drop-zone p { font-size: 12.5px; color: #6b7280; margin-bottom: 18px; }
+.drop-zone-btn {
+  background: #4f8ef7; color: #fff;
+  border: none; border-radius: 5px;
+  padding: 9px 20px; font-size: 13px; font-weight: 600;
+  cursor: pointer; font-family: 'Inter', sans-serif;
+  transition: background 0.15s;
+}
+.drop-zone-btn:hover { background: #3b7de8; }
+.drop-hint { font-size: 10.5px; color: #9ca3af; margin-top: 10px; font-family: 'Courier New', monospace; }
+.demo-link {
+  margin-top: 14px;
+  background: none; border: 1px dashed #d1d5db; border-radius: 4px;
+  padding: 5px 14px; font-size: 11px; color: #9ca3af;
+  cursor: pointer; font-family: 'Inter', sans-serif;
+  transition: all 0.15s;
+}
+.demo-link:hover { border-color: #9ca3af; color: #6b7280; }
+#fileInput { display: none; }
+
+/* ── Meta info bar ── */
+.meta-bar {
+  display: flex; gap: 0;
+  margin: 0 20px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  font-size: 11.5px;
+}
+.meta-item {
+  padding: 8px 16px;
+  border-right: 1px solid #e5e7eb;
+  color: #6b7280;
+}
+.meta-item:last-child { border-right: none; }
+.meta-item strong { color: #111827; font-weight: 600; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: #f3f4f6; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+
+/* ── Footer ── */
+.footer {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: #1e2330;
+  color: #94a3b8;
+  height: 30px;
+  display: flex; align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  font-size: 11px;
+  z-index: 200;
+}
+.footer-right { color: #f97316; font-weight: 600; }
+
+/* ── Event log no data ── */
+.no-data-msg {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 30px;
+  color: #9ca3af; font-size: 12px; gap: 6px;
+}
+
+/* Status dot */
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #475569; display: inline-block; }
+.status-dot.loaded { background: #22c55e; }
+
+/* ========================================================================
+   RESPONSIVE LAYOUT
+   Breakpoints: 1400px | 1100px | 900px | 768px | 540px
+   ======================================================================== */
+
+/* ── Charts: use aspect-ratio so they resize with their container ── */
+.chart-wrap canvas {
+  max-width: 100%;
+}
+
+/* ── 1400px: slightly tighter KPI values ── */
+@media (max-width: 1400px) {
+  .kpi-value { font-size: 24px; }
+}
+
+/* ── 1100px: collapse 3-col grids, reduce KPI columns ── */
+@media (max-width: 1100px) {
+  .kpi-strip          { grid-template-columns: repeat(3, 1fr); }
+  .kpi-card:nth-child(3) { border-right: none; }
+  .kpi-card:nth-child(4) { border-top: 1px solid #e5e7eb; }
+  .section-row.three-col { grid-template-columns: 1fr 1fr; }
+  .action-grid        { grid-template-columns: 1fr; }
+}
+
+/* ── 900px: two-col grids collapse to one; sidebar narrows ── */
+@media (max-width: 900px) {
+  .sidebar            { width: 160px; }
+  .nav-item           { font-size: 11.5px; padding: 8px 12px; }
+  .section-row.two-col   { grid-template-columns: 1fr; }
+  .section-row.three-col { grid-template-columns: 1fr; }
+  .kpi-strip          { grid-template-columns: repeat(2, 1fr); }
+  .kpi-card:nth-child(2n) { border-right: none; }
+  .kpi-card:nth-child(3) { border-top: 1px solid #e5e7eb; }
+  .event-two-col      { grid-template-columns: 1fr; }
+  .domain-grid        { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+}
+
+/* ── 768px: hide sidebar, full-width layout ── */
+@media (max-width: 768px) {
+  .sidebar            { display: none; }
+  .topbar-title       { font-size: 12px; }
+  .topbar-version     { display: none; }
+  .kpi-strip          { grid-template-columns: repeat(2, 1fr); margin: 0 12px 12px; }
+  .kpi-value          { font-size: 22px; }
+  .kpi-card           { padding: 12px 14px; }
+  .content-pad        { padding: 0 12px; }
+  .exec-card          { margin: 0 12px 12px; }
+  .meta-bar           { margin: 0 12px 10px; flex-wrap: wrap; }
+  .page-tabs          { margin: 0 12px 12px; overflow-x: auto; white-space: nowrap; padding-bottom: 0; }
+  .page-tab           { padding: 8px 12px; font-size: 12px; }
+  .alert-banner       { margin: 0 12px 10px; font-size: 12px; }
+  .section-row.two-col,
+  .section-row.three-col,
+  .section-row.one-col { grid-template-columns: 1fr; }
+  .action-grid        { grid-template-columns: 1fr; }
+  .domain-grid        { grid-template-columns: 1fr 1fr; }
+  .tbl-wrap           { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .drop-zone          { width: calc(100vw - 40px); padding: 32px 24px; }
+  .footer             { font-size: 10px; }
+  .footer-right       { display: none; }
+}
+
+/* ── 540px: single column everything ── */
+@media (max-width: 540px) {
+  .kpi-strip          { grid-template-columns: 1fr 1fr; }
+  .domain-grid        { grid-template-columns: 1fr; }
+  .tbl-controls       { flex-direction: column; align-items: stretch; }
+  .tbl-search         { min-width: 0; }
+  .kpi-value          { font-size: 20px; }
+  .page-tabs          { gap: 0; }
+  .page-tab           { padding: 8px 10px; font-size: 11px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo">
+      <span></span><span></span><span></span><span></span>
+    </div>
+    <span class="topbar-title">RC4 Deprecation Readiness Dashboard</span>
+    <span class="topbar-version">v1.1</span>
+  </div>
+  <div class="topbar-right">
+    <span class="topbar-refresh">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M23 4v6h-6M1 20v-6h6"/>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+      </svg>
+      <span id="refreshLabel">No data loaded</span>
+    </span>
+    <span>|</span>
+    <span id="auditDateLabel">—</span>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="cursor:pointer;opacity:0.5">
+      <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+    </svg>
+  </div>
+</div>
+
+<!-- App body -->
+<div class="app-body">
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-nav">
+      <a class="nav-item" data-tab="exec" href="#" onclick="showTab('exec');return false;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        Executive Summary
+      </a>
+      <a class="nav-item" data-tab="exposure" href="#" onclick="showTab('exposure');return false;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        RC4 Exposure
+      </a>
+      <a class="nav-item" data-tab="domains" href="#" onclick="showTab('domains');return false;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        Domain Breakdown
+      </a>
+      <a class="nav-item" data-tab="objects" href="#" onclick="showTab('objects');return false;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Object Detail
+      </a>
+      <a class="nav-item" data-tab="eventlog" href="#" onclick="showTab('eventlog');return false;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        KDC Event Log
+      </a>
+      <a class="nav-item" data-tab="gpo" href="#" onclick="showTab('gpo');return false;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+        GPO Settings
+      </a>
+      <a class="nav-item" data-tab="remediation" href="#" onclick="showTab('remediation');return false;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Remediation Plan
+      </a>
+    </div>
+
+    <div class="sidebar-section">Upload Data</div>
+    <div class="upload-item">
+      <div class="upload-btn-side" onclick="document.getElementById('fileInput').click()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Audit CSV Export
+      </div>
+      <div class="uploaded-filename" id="sidebarFilename"></div>
+    </div>
+    <div style="height:4px"></div>
+    <button class="analyse-btn" onclick="document.getElementById('fileInput').click()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Load Audit File
+    </button>
+    <input type="file" id="fileInput" accept=".csv">
+
+    <div class="sidebar-footer-section" style="margin-top:16px">
+      <div class="sidebar-footer-lbl">Data Source</div>
+      <div class="sidebar-footer-val">Invoke-RC4Audit.ps1</div>
+      <div class="sidebar-footer-sub" id="sidebarAuditDate">No data loaded</div>
+    </div>
+  </nav>
+
+  <!-- Main content -->
+  <main class="main" id="mainContent">
+
+    <!-- Upload page (shown when no data) -->
+    <div class="drop-zone-page" id="uploadPage">
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-zone-icon">🔐</div>
+        <h2>Load RC4 Audit Data</h2>
+        <p>Select the master CSV produced by<br><strong>Invoke-RC4Audit.ps1</strong></p>
+        <button class="drop-zone-btn" onclick="document.getElementById('fileInput').click()">Choose CSV File</button>
+        <div class="drop-hint">RC4_Master_YYYYMMDD_HHMMSS.csv</div>
+        <div id="loadError" style="display:none;margin-top:12px;padding:8px 12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:4px;color:#dc2626;font-size:12px;text-align:left;"></div>
+        <button class="demo-link" onclick="loadDemoData()" style="margin-top:14px">Load demo data (for testing)</button>
+      </div>
+    </div>
+
+    <!-- Dashboard (hidden until loaded) -->
+    <div id="dashContent" style="display:none;padding-top:12px">
+
+      <!-- Alert banner -->
+      <div class="alert-banner" id="alertBanner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span id="alertText">Loading...</span>
+        <button class="close-btn" onclick="this.closest('.alert-banner').classList.add('hidden')">×</button>
+      </div>
+
+      <!-- Meta bar — hidden until data is loaded -->
+      <div class="meta-bar" id="metaBar" style="display:none"></div>
+
+      <!-- KPI strip — hidden until data is loaded -->
+      <div class="kpi-strip" id="kpiStrip" style="display:none"></div>
+
+      <!-- Page tabs -->
+      <div class="page-tabs">
+        <div class="page-tab active" onclick="showTab('exec')"        id="tab-exec">Executive Summary</div>
+        <div class="page-tab"        onclick="showTab('exposure')"    id="tab-exposure">RC4 Exposure</div>
+        <div class="page-tab"        onclick="showTab('domains')"     id="tab-domains">Domain Breakdown</div>
+        <div class="page-tab"        onclick="showTab('objects')"     id="tab-objects">Object Detail</div>
+        <div class="page-tab"        onclick="showTab('eventlog')"    id="tab-eventlog">KDC Event Log</div>
+        <div class="page-tab"        onclick="showTab('gpo')"         id="tab-gpo">GPO Settings</div>
+        <div class="page-tab"        onclick="showTab('remediation')" id="tab-remediation">Remediation Plan</div>
+      </div>
+
+      <!-- Executive Summary tab -->
+      <div class="tab-panel active" id="panel-exec">
+        <div class="exec-card">
+          <div class="exec-card-header">
+            <div class="exec-card-title">RC4 Encryption — Forest Deprecation Readiness Status</div>
+            <span class="risk-pill critical" id="riskPill">CRITICAL RISK</span>
+          </div>
+          <div class="exec-body" id="execBody">Loading...</div>
+        </div>
+        <div class="content-pad">
+          <div class="section-row two-col">
+            <div class="card">
+              <div class="card-header">
+                <div><div class="card-title">RC4 Exposure by Domain</div><div class="card-sub">Objects with RC4 enabled vs AES256-only per domain</div></div>
+                <button class="export-csv-btn" onclick="exportChart('domain')">Export CSV</button>
+              </div>
+              <div class="chart-wrap"><canvas id="chartDomain" height="220"></canvas></div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <div><div class="card-title">Risk Level Distribution</div><div class="card-sub">RC4-exposed objects by risk classification</div></div>
+                <button class="export-csv-btn" onclick="exportChart('risk')">Export CSV</button>
+              </div>
+              <div class="chart-wrap"><canvas id="chartRisk" height="220"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RC4 Exposure tab -->
+      <div class="tab-panel" id="panel-exposure">
+        <div class="content-pad">
+          <div class="section-row two-col" style="margin-bottom:16px">
+            <div class="card">
+              <div class="card-header">
+                <div><div class="card-title">Exposure by Object Type</div><div class="card-sub">Users · Service Accounts · Computers · gMSAs</div></div>
+                <button class="export-csv-btn" onclick="exportChart('type')">Export CSV</button>
+              </div>
+              <div class="chart-wrap"><canvas id="chartType" height="220"></canvas></div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <div><div class="card-title">Encryption Type Breakdown</div><div class="card-sub">msDS-SupportedEncryptionTypes values across forest</div></div>
+                <button class="export-csv-btn" onclick="exportChart('enctype')">Export CSV</button>
+              </div>
+              <div class="chart-wrap"><canvas id="chartEncTypes" height="220"></canvas></div>
+            </div>
+          </div>
+          <div class="section-row one-col">
+            <div class="card">
+              <div class="card-header">
+                <div><div class="card-title">AES Migration Progress by Domain</div><div class="card-sub">Percentage of objects configured AES256-only</div></div>
+              </div>
+              <div id="aesMigWrap"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Domain breakdown tab -->
+      <div class="tab-panel" id="panel-domains">
+        <div class="content-pad">
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+              <div class="card-title">Domain-by-Domain RC4 Exposure</div>
+              <button class="export-csv-btn" onclick="exportSummaryCSV()">Export CSV</button>
+            </div>
+            <div class="domain-grid" id="domainGrid"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div><div class="card-title">Non-Compliant Objects by Domain</div><div class="card-sub">RC4-exposed object count per domain</div></div>
+              <button class="export-csv-btn" onclick="exportChart('domain2')">Export CSV</button>
+            </div>
+            <div class="chart-wrap"><canvas id="chartDomain2" height="180"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Object detail tab -->
+      <div class="tab-panel" id="panel-objects">
+        <div class="content-pad">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">RC4-Exposed Objects</div>
+              <div style="display:flex;gap:8px">
+                <button class="export-csv-btn" onclick="exportFiltered()">Export Filtered CSV</button>
+                <button class="export-csv-btn" onclick="exportAll()">Export All RC4 CSV</button>
+              </div>
+            </div>
+            <div class="tbl-controls">
+              <input class="tbl-search" id="searchInput" type="text" placeholder="Search account, domain, SPN...">
+              <select class="tbl-select" id="filterDomain"><option value="">All Domains</option></select>
+              <select class="tbl-select" id="filterType"><option value="">All Types</option></select>
+              <select class="tbl-select" id="filterRisk"><option value="">All Risk Levels</option></select>
+            </div>
+            <div class="tbl-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th onclick="sortTable('SamAccountName')">Account ↕</th>
+                    <th onclick="sortTable('Domain')">Domain ↕</th>
+                    <th onclick="sortTable('ObjectType')">Type ↕</th>
+                    <th onclick="sortTable('EncryptionTypes')">Enc Types</th>
+                    <th onclick="sortTable('RiskLevel')">Risk ↕</th>
+                    <th onclick="sortTable('HasSPN')">SPN</th>
+                    <th onclick="sortTable('AdminCount')">Admin</th>
+                    <th onclick="sortTable('LastLogonDate')">Last Logon ↕</th>
+                    <th onclick="sortTable('Enabled')">Enabled</th>
+                  </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+              </table>
+            </div>
+            <div class="tbl-footer">
+              <span id="tableInfo">—</span>
+              <div class="pagination" id="pagination"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KDC Event Log tab -->
+      <div class="tab-panel" id="panel-eventlog">
+        <div class="content-pad">
+          <div class="section-row two-col event-two-col">
+            <div class="card">
+              <div class="card-header">
+                <div><div class="card-title">RC4 Ticket Requests by Domain</div><div class="card-sub">Event 4769, EncType 0x17 (RC4-HMAC) — PDC Emulator Security Log</div></div>
+                <button class="export-csv-btn" onclick="exportEventCSV()">Export CSV</button>
+              </div>
+              <div id="eventChartWrap"><canvas id="chartEvents" height="220"></canvas></div>
+              <div class="no-data-msg" id="noEventMsg" style="display:none">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                No event log data. Ensure -SkipEventLog was not used when running the audit script.
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Top RC4-Requesting Clients</div>
+              </div>
+              <div id="topClientsWrap"><div class="no-data-msg">No event log data loaded.</div></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Event Log Records</div>
+              <button class="export-csv-btn" onclick="exportEventCSV()">Export CSV</button>
+            </div>
+            <div class="tbl-wrap">
+              <table>
+                <thead><tr>
+                  <th>Time</th><th>Domain</th><th>Account</th>
+                  <th>Service</th><th>Client IP</th><th>Enc Type</th>
+                </tr></thead>
+                <tbody id="eventTableBody"></tbody>
+              </table>
+            </div>
+            <div class="no-data-msg" id="noEventTableMsg" style="display:none">No event log data.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GPO tab -->
+      <div class="tab-panel" id="panel-gpo">
+        <div class="content-pad">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Group Policy — Kerberos Configuration</div>
+              <button class="export-csv-btn" onclick="exportGPOCSV()">Export CSV</button>
+            </div>
+            <div class="tbl-wrap">
+              <table>
+                <thead><tr>
+                  <th>GPO Name</th><th>Domain</th>
+                  <th>References RC4</th><th>References AES256</th>
+                  <th>Kerb Settings</th><th>Status</th><th>Modified</th>
+                </tr></thead>
+                <tbody id="gpoTableBody"></tbody>
+              </table>
+            </div>
+            <div class="no-data-msg" id="noGPOMsg" style="display:none">No GPO data in CSV. Ensure GroupPolicy module was available during audit.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Remediation tab -->
+      <div class="tab-panel" id="panel-remediation">
+        <div class="content-pad">
+          <div class="action-grid" id="actionsGrid"></div>
+        </div>
+      </div>
+
+    </div><!-- /dashContent -->
+  </main>
+</div>
+
+<!-- Footer -->
+<footer class="footer">
+  <span>RC4 Deprecation Readiness Dashboard v1.1 &nbsp;·&nbsp; Darren Reevell &nbsp;·&nbsp; Intertek Group plc</span>
+  <span class="footer-right">CONFIDENTIAL — FOR INTERNAL USE ONLY</span>
+</footer>
+
+<script>
+/*
+ * RC4 Deprecation Readiness Dashboard — Client Logic
+ * Author  : Darren Reevell, Intertek Group plc
+ * Version : 1.1  |  April 2026
+ *
+ * All data is processed entirely in the browser. No data is transmitted
+ * externally. This file requires no server-side component.
+ *
+ * Dependencies (loaded from CDN):
+ *   PapaParse 5.4.1  — CSV parsing
+ *   Chart.js  4.4.1  — Chart rendering
+ */
+
+// ---------------------------------------------------------------------------
+// Global state
+// ---------------------------------------------------------------------------
+let allData       = [];   // All rows from the loaded CSV
+let accountData   = [];   // RecordType === 'Account' rows only
+let rc4Accounts   = [];   // Account rows where RC4Enabled === 'True'
+let summaryData   = [];   // RecordType === 'Summary' rows
+let eventLogData  = [];   // RecordType === 'EventLog' rows
+let gpoData       = [];   // RecordType === 'GPO' rows
+
+let filteredRows  = [];   // Currently filtered subset of rc4Accounts for the table
+let currentPage   = 1;
+let sortCol       = 'RiskLevel';
+let sortAsc       = false;
+
+const PAGE_SIZE   = 50;
+const MAX_CSV_MB  = 100;  // Refuse files larger than this to prevent OOM
+
+let charts        = {};   // Chart.js instance registry for lifecycle management
+
+// ---------------------------------------------------------------------------
+// HTML escaping — applied to ALL user-data values before innerHTML insertion
+// Prevents XSS if a CSV contains malicious content in any string field.
+// ---------------------------------------------------------------------------
+function esc(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g,  '&amp;')
+    .replace(/</g,  '&lt;')
+    .replace(/>/g,  '&gt;')
+    .replace(/"/g,  '&quot;')
+    .replace(/'/g,  '&#x27;');
+}
+
+// ---------------------------------------------------------------------------
+// Error display — replaces alert() with an inline message in the upload zone
+// ---------------------------------------------------------------------------
+function showError(msg) {
+  const el = document.getElementById('loadError');
+  if (el) { el.textContent = msg; el.style.display = 'block'; }
+}
+
+function clearError() {
+  const el = document.getElementById('loadError');
+  if (el) { el.style.display = 'none'; el.textContent = ''; }
+}
+
+// ---------------------------------------------------------------------------
+// File input and drag-and-drop handlers
+// ---------------------------------------------------------------------------
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover',  function(e) { e.preventDefault(); dropZone.classList.add('drag'); });
+dropZone.addEventListener('dragleave', function()  { dropZone.classList.remove('drag'); });
+dropZone.addEventListener('drop', function(e) {
+  e.preventDefault();
+  dropZone.classList.remove('drag');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+function loadFile(file) {
+  clearError();
+
+  // Guard against very large files that could exhaust browser memory
+  const sizeMB = file.size / (1024 * 1024);
+  if (sizeMB > MAX_CSV_MB) {
+    showError('File too large (' + sizeMB.toFixed(1) + ' MB). Maximum supported size is ' + MAX_CSV_MB + ' MB.');
+    return;
+  }
+
+  Papa.parse(file, {
+    header:         true,
+    skipEmptyLines: true,
+    complete: function(result) {
+      if (!result.data || result.data.length === 0) {
+        showError('The CSV file appears to be empty or could not be parsed.');
+        return;
+      }
+      processData(result.data, file.name);
+    },
+    error: function(err) {
+      showError('CSV parse error: ' + err.message);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Data processing — called once after a CSV is successfully parsed
+// ---------------------------------------------------------------------------
+function processData(rows, filename) {
+  allData      = rows;
+
+  // Filter to each record type using the RecordType column.
+  // The fallback for missing RecordType is intentionally narrow — only rows
+  // that have a SamAccountName AND no RecordType are treated as Account rows.
+  // This avoids corrupting accountData with EventLog/GPO/Summary rows.
+  accountData  = rows.filter(function(r) {
+    return r.RecordType === 'Account' || (r.RecordType === '' && r.SamAccountName);
+  });
+  rc4Accounts  = accountData.filter(function(r) {
+    return r.RC4Enabled === 'True' || r.RC4Enabled === 'true';
+  });
+  summaryData  = rows.filter(function(r) { return r.RecordType === 'Summary';  });
+  eventLogData = rows.filter(function(r) { return r.RecordType === 'EventLog'; });
+  gpoData      = rows.filter(function(r) { return r.RecordType === 'GPO';      });
+
+  var ts = '';
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].AuditTimestamp) { ts = rows[i].AuditTimestamp; break; }
+  }
+  if (!ts) ts = 'Unknown';
+
+  // Show dashboard, hide upload page
+  document.getElementById('uploadPage').style.display    = 'none';
+  document.getElementById('dashContent').style.display   = 'block';
+  document.getElementById('metaBar').style.display       = 'flex';
+  document.getElementById('kpiStrip').style.display      = 'grid';
+  document.getElementById('refreshLabel').textContent    = 'Audit: ' + ts.substring(0, 10);
+  document.getElementById('auditDateLabel').textContent  = ts.substring(0, 10);
+  document.getElementById('sidebarFilename').textContent = filename || 'Loaded';
+  document.getElementById('sidebarAuditDate').textContent = 'Audit: ' + ts;
+
+  renderAll();
+  showTab('exec');
+}
+
+// ---------------------------------------------------------------------------
+// Tab navigation — uses data-tab attribute for reliable matching
+// ---------------------------------------------------------------------------
+function showTab(tab) {
+  document.querySelectorAll('.tab-panel').forEach(function(p)  { p.classList.remove('active'); });
+  document.querySelectorAll('.page-tab').forEach(function(t)   { t.classList.remove('active'); });
+  document.querySelectorAll('.nav-item').forEach(function(n)   { n.classList.remove('active'); });
+
+  var panel = document.getElementById('panel-' + tab);
+  var tabEl = document.getElementById('tab-'   + tab);
+  if (panel) panel.classList.add('active');
+  if (tabEl) tabEl.classList.add('active');
+
+  // Match sidebar nav items by their data-tab attribute (explicit, not text-based)
+  document.querySelectorAll('.nav-item[data-tab]').forEach(function(n) {
+    if (n.getAttribute('data-tab') === tab) n.classList.add('active');
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Master render — calls every section renderer in dependency order
+// ---------------------------------------------------------------------------
+function renderAll() {
+  renderAlert();
+  renderMeta();
+  renderKPIs();
+  renderExec();
+  renderCharts();
+  renderDomainCards();
+  renderEventSection();
+  renderActions();
+  renderTable();
+  renderGPOTable();
+}
+
+// ---------------------------------------------------------------------------
+// Alert banner — top-of-page warning strip
+// ---------------------------------------------------------------------------
+function renderAlert() {
+  var critical = rc4Accounts.filter(function(r) { return r.RiskLevel === 'Critical'; }).length;
+  // Kerberoastable = User/ServiceAccount/gMSA with SPN + RC4 only (not Computer accounts)
+  var kerberoastable = rc4Accounts.filter(function(r) {
+    return (r.HasSPN === 'True' || r.HasSPN === 'true') &&
+           (r.ObjectType === 'User' ||
+            r.ObjectType === 'Service Account (User)' ||
+            r.ObjectType === 'gMSA');
+  }).length;
+
+  var msg = '<strong>' + rc4Accounts.length.toLocaleString() + ' objects</strong> are RC4-enabled across the forest. ';
+  if (critical > 0) {
+    msg += '<strong>' + critical.toLocaleString() + ' Critical-risk accounts</strong> are directly Kerberoastable. ';
+  }
+  if (kerberoastable > 0) {
+    msg += kerberoastable.toLocaleString() + ' service/user accounts with SPNs exposed to Kerberoasting.';
+  }
+  document.getElementById('alertText').innerHTML = msg;
+  document.getElementById('alertBanner').classList.remove('hidden');
+}
+
+// ---------------------------------------------------------------------------
+// Meta information bar
+// ---------------------------------------------------------------------------
+function renderMeta() {
+  var domains = Array.from(new Set(accountData.map(function(r) { return r.Domain; }).filter(Boolean)));
+  var ts = '';
+  for (var i = 0; i < accountData.length; i++) {
+    if (accountData[i].AuditTimestamp) { ts = accountData[i].AuditTimestamp; break; }
+  }
+  if (!ts) ts = '—';
+
+  document.getElementById('metaBar').innerHTML =
+    '<div class="meta-item">Forest Domains: <strong>' + esc(String(domains.length)) + '</strong></div>' +
+    '<div class="meta-item">Total Objects: <strong>' + accountData.length.toLocaleString() + '</strong></div>' +
+    '<div class="meta-item">RC4 Exposed: <strong style="color:#dc2626">' + rc4Accounts.length.toLocaleString() + '</strong></div>' +
+    '<div class="meta-item">Event Log Records: <strong>' + eventLogData.length.toLocaleString() + '</strong></div>' +
+    '<div class="meta-item">GPO Records: <strong>' + gpoData.length.toLocaleString() + '</strong></div>' +
+    '<div class="meta-item">Audit Timestamp: <strong>' + esc(ts) + '</strong></div>';
+}
+
+// ---------------------------------------------------------------------------
+// KPI strip — six headline metrics
+// Export buttons use data-key attributes and a delegated listener to avoid
+// injecting function call strings directly into onclick attributes.
+// ---------------------------------------------------------------------------
+function renderKPIs() {
+  var total   = accountData.length;
+  var rc4     = rc4Accounts.length;
+  var rc4Pct  = total > 0 ? ((rc4 / total) * 100).toFixed(1) : '0.0';
+  var critical = rc4Accounts.filter(function(r) { return r.RiskLevel === 'Critical'; }).length;
+  // AES-compliant: AES256 present with no RC4 or DES (covers mask=16 and mask=24)
+  // Renamed from 'AES256 Only' — mask=24 (AES128+AES256) also qualifies
+  var aesCompliant = accountData.filter(function(r) { return r.AES256Only === 'True' || r.AES256Only === 'true'; }).length;
+
+  var kpis = [
+    { val: total.toLocaleString(),              lbl: 'Total Objects',     cls: 'neutral', key: 'total'    },
+    { val: rc4Pct + '%',                        lbl: 'RC4 Exposure Rate', cls: 'red',     key: 'pct'      },
+    { val: (total - rc4).toLocaleString(),      lbl: 'Clean Objects',     cls: 'green',   key: 'clean'    },
+    { val: rc4.toLocaleString(),                lbl: 'RC4 Exposed',       cls: 'red',     key: 'rc4'      },
+    { val: critical.toLocaleString(),           lbl: 'Critical Risk',     cls: critical > 0 ? 'red' : 'green', key: 'critical' },
+    // Label corrected: AES256Only flag covers mask=24 (AES128+AES256) as well as mask=16
+    { val: aesCompliant.toLocaleString(),       lbl: 'AES-Compliant',     cls: 'green',   key: 'aes'      }
+  ];
+
+  document.getElementById('kpiStrip').innerHTML = kpis.map(function(k) {
+    return '<div class="kpi-card ' + k.cls + '">' +
+             '<div class="kpi-value">' + esc(k.val) + '</div>' +
+             '<div class="kpi-label">' + esc(k.lbl) + '</div>' +
+             '<button class="export-csv-btn" data-kpi-key="' + esc(k.key) + '">Export CSV</button>' +
+           '</div>';
+  }).join('');
+}
+
+// Delegated listener for KPI export buttons — avoids inline onclick with dynamic keys
+document.getElementById('kpiStrip').addEventListener('click', function(e) {
+  var btn = e.target.closest('[data-kpi-key]');
+  if (!btn) return;
+  exportKPI(btn.getAttribute('data-kpi-key'));
+});
+
+// ---------------------------------------------------------------------------
+// Executive summary
+// ---------------------------------------------------------------------------
+function renderExec() {
+  var total    = accountData.length;
+  var rc4      = rc4Accounts.length;
+  var rc4Pct   = total > 0 ? ((rc4 / total) * 100).toFixed(1) : '0.0';
+  var critical = rc4Accounts.filter(function(r) { return r.RiskLevel === 'Critical'; }).length;
+  var high     = rc4Accounts.filter(function(r) { return r.RiskLevel === 'High';     }).length;
+
+  // Kerberoastable SPN count: User and ServiceAccount objects ONLY.
+  // Computer accounts are excluded — their machine passwords are 128-char random
+  // values and are not practically Kerberoastable despite having SPNs.
+  var kerberoastableRC4 = rc4Accounts.filter(function(r) {
+    return (r.HasSPN === 'True' || r.HasSPN === 'true') &&
+           (r.ObjectType === 'User' ||
+            r.ObjectType === 'Service Account (User)' ||
+            r.ObjectType === 'gMSA');
+  }).length;
+
+  // Total SPN count across all types (for general exposure reporting)
+  var spnRC4All = rc4Accounts.filter(function(r) {
+    return r.HasSPN === 'True' || r.HasSPN === 'true';
+  }).length;
+
+  var aesCompliant = accountData.filter(function(r) {
+    return r.AES256Only === 'True' || r.AES256Only === 'true';
+  }).length;
+  var domains = Array.from(new Set(accountData.map(function(r) { return r.Domain; }).filter(Boolean)));
+
+  // Risk classification:
+  // - Any Kerberoastable SPN (user/svc account with SPN + RC4) = at minimum HIGH
+  //   because even one such account is a viable offline attack target.
+  // - Critical count > 0 always = CRITICAL.
+  // - High percentage exposure without Kerberoastable SPNs uses percentage thresholds.
+  var riskCls = 'critical', riskLbl = 'CRITICAL RISK';
+  if (critical === 0 && kerberoastableRC4 === 0 && parseFloat(rc4Pct) < 5) {
+    riskCls = 'ok';     riskLbl = 'LOW RISK';
+  } else if (critical === 0 && kerberoastableRC4 === 0 && parseFloat(rc4Pct) < 15) {
+    riskCls = 'medium'; riskLbl = 'MEDIUM RISK';
+  } else if (critical > 0 || kerberoastableRC4 > 0) {
+    // Any Kerberoastable account = minimum HIGH; critical count pushes to CRITICAL
+    riskCls = critical > 0 ? 'critical' : 'high';
+    riskLbl = critical > 0 ? 'CRITICAL RISK' : 'HIGH RISK';
+  } else {
+    // High percentage, no Kerberoastable SPNs, no Critical accounts
+    riskCls = 'high'; riskLbl = 'HIGH RISK';
+  }
+
+  document.getElementById('riskPill').textContent = riskLbl;
+  document.getElementById('riskPill').className   = 'risk-pill ' + riskCls;
+
+  // Kerberoasting note — only shown when user/svc accounts with SPNs are RC4-enabled.
+  // Computer accounts with SPNs are reported separately as they represent a different
+  // (lower practical) risk — RC4 computer tickets cannot be cracked offline.
+  var kerbNote = '';
+  if (kerberoastableRC4 > 0) {
+    kerbNote = '<strong style="color:#dc2626">' + kerberoastableRC4.toLocaleString() +
+               ' service/user accounts with SPNs are RC4-enabled and are directly Kerberoastable</strong>' +
+               ' — an attacker can request service tickets offline and crack them without elevated privilege. ';
+  }
+  var compSpnNote = '';
+  var compSpnRC4 = spnRC4All - kerberoastableRC4;
+  if (compSpnRC4 > 0) {
+    compSpnNote = 'A further <strong>' + compSpnRC4.toLocaleString() +
+                  ' computer accounts</strong> carry RC4-enabled SPNs; these are not practically ' +
+                  'Kerberoastable due to machine password complexity, but should still be remediated. ';
+  }
+
+  document.getElementById('execBody').innerHTML =
+    'This audit covers <strong>' + domains.length + ' Active Directory domain(s)</strong> across the forest, evaluating ' +
+    '<strong>' + total.toLocaleString() + ' objects</strong> (user accounts, computer accounts, service accounts, and gMSAs) ' +
+    'for RC4 encryption exposure ahead of Microsoft\'s upcoming RC4 deprecation enforcement.' +
+    '<br><br>' +
+    '<strong style="color:#dc2626">' + rc4.toLocaleString() + ' objects (' + rc4Pct + '%)</strong> currently have RC4 enabled or ' +
+    'inherit a domain default that permits RC4. Of these, <strong style="color:#dc2626">' + critical + '</strong> are ' +
+    'classified <strong>CRITICAL</strong> (service accounts or privileged user accounts with SPNs ' +
+    'directly exploitable via Kerberoasting). A further <strong>' + high + '</strong> are classified <strong>HIGH</strong> risk ' +
+    '(admin/privileged accounts with RC4 but no SPN). ' +
+    kerbNote + compSpnNote +
+    '<br><br>' +
+    'Only <strong style="color:#16a34a">' + aesCompliant.toLocaleString() + ' objects</strong> are AES-compliant ' +
+    '(AES256 present, no RC4 or DES). ' +
+    '<strong>Immediate action is required</strong> to set ' +
+    '<code>msDS-SupportedEncryptionTypes = 0x18 (24)</code> on all exposed accounts, update Group Policy to ' +
+    'enforce AES-only Kerberos, and raise the Domain and Forest Functional Level. Failure to act before ' +
+    'Microsoft enforces RC4 deprecation will result in Kerberos authentication failures across all RC4-dependent workloads.';
+}
+
+// ---------------------------------------------------------------------------
+// Charts — destroy existing instance before re-creating to prevent canvas reuse errors
+// ---------------------------------------------------------------------------
+Chart.defaults.font  = { family: "Inter, 'Segoe UI', sans-serif", size: 11 };
+Chart.defaults.color = '#6b7280';
+
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+function renderCharts() {
+  var domains  = Array.from(new Set(accountData.map(function(r) { return r.Domain; }).filter(Boolean))).sort();
+  var shortDom = function(d) { return d.replace(/\..*/, '').toUpperCase(); };
+
+  // RC4 vs AES256-only by domain (Executive Summary tab)
+  destroyChart('chartDomain');
+  charts.chartDomain = new Chart(document.getElementById('chartDomain'), {
+    type: 'bar',
+    data: {
+      labels: domains.map(shortDom),
+      datasets: [
+        {
+          label: 'RC4 Enabled',
+          data:  domains.map(function(d) { return rc4Accounts.filter(function(r) { return r.Domain === d; }).length; }),
+          backgroundColor: '#ef4444', borderRadius: 3
+        },
+        {
+          label: 'AES-Compliant',
+          data:  domains.map(function(d) { return accountData.filter(function(r) { return r.Domain === d && (r.AES256Only === 'True' || r.AES256Only === 'true'); }).length; }),
+          backgroundColor: '#22c55e', borderRadius: 3
+        }
+      ]
+    },
+    options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { labels: { boxWidth: 12 } } }, scales: { x: { grid: { color: '#f3f4f6' } }, y: { grid: { color: '#f3f4f6' }, beginAtZero: true } } }
+  });
+
+  // Risk level doughnut
+  destroyChart('chartRisk');
+  charts.chartRisk = new Chart(document.getElementById('chartRisk'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Critical', 'High', 'Medium', 'Low'],
+      datasets: [{
+        data: ['Critical', 'High', 'Medium', 'Low'].map(function(r) { return rc4Accounts.filter(function(a) { return a.RiskLevel === r; }).length; }),
+        backgroundColor: ['#ef4444', '#f97316', '#f59e0b', '#22c55e'],
+        borderColor: '#fff', borderWidth: 3
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } }, cutout: '60%' }
+  });
+
+  // Object type doughnut (RC4 Exposure tab)
+  destroyChart('chartType');
+  charts.chartType = new Chart(document.getElementById('chartType'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Users', 'Service Accts', 'Computers', 'gMSAs'],
+      datasets: [{
+        data: [
+          rc4Accounts.filter(function(r) { return r.ObjectType === 'User'; }).length,
+          rc4Accounts.filter(function(r) { return r.ObjectType === 'Service Account (User)'; }).length,
+          rc4Accounts.filter(function(r) { return r.ObjectType === 'Computer'; }).length,
+          rc4Accounts.filter(function(r) { return r.ObjectType === 'gMSA'; }).length
+        ],
+        backgroundColor: ['#4f8ef7', '#f59e0b', '#06b6d4', '#22c55e'],
+        borderColor: '#fff', borderWidth: 3
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } }, cutout: '60%' }
+  });
+
+  // Encryption type breakdown — horizontal bar
+  destroyChart('chartEncTypes');
+  var encCounts = {};
+  accountData.forEach(function(r) {
+    var t = r.EncryptionTypes || 'Unknown';
+    encCounts[t] = (encCounts[t] || 0) + 1;
+  });
+  var sorted = Object.entries(encCounts).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 8);
+  charts.chartEncTypes = new Chart(document.getElementById('chartEncTypes'), {
+    type: 'bar',
+    data: {
+      labels: sorted.map(function(e) { return e[0]; }),
+      datasets: [{
+        label: 'Count',
+        data:  sorted.map(function(e) { return e[1]; }),
+        backgroundColor: sorted.map(function(e) { return (e[0].includes('RC4') || e[0].includes('Inherits')) ? '#ef4444' : '#22c55e'; }),
+        borderRadius: 3
+      }]
+    },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { grid: { color: '#f3f4f6' }, beginAtZero: true }, y: { grid: { color: '#f3f4f6' } } } }
+  });
+
+  // RC4 count per domain — horizontal bar (Domain Breakdown tab)
+  destroyChart('chartDomain2');
+  charts.chartDomain2 = new Chart(document.getElementById('chartDomain2'), {
+    type: 'bar',
+    data: {
+      labels: domains,
+      datasets: [{
+        label: 'Non-compliant (RC4)',
+        data:  domains.map(function(d) { return rc4Accounts.filter(function(r) { return r.Domain === d; }).length; }),
+        backgroundColor: '#4f8ef7', borderRadius: 3
+      }]
+    },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: true, plugins: { legend: { labels: { boxWidth: 12 } } }, scales: { x: { grid: { color: '#f3f4f6' }, beginAtZero: true }, y: { grid: { color: '#f3f4f6' } } } }
+  });
+
+  // AES migration progress bars
+  var aesMig = document.getElementById('aesMigWrap');
+  aesMig.innerHTML = domains.map(function(d) {
+    var tot = accountData.filter(function(r) { return r.Domain === d; }).length;
+    var aes = accountData.filter(function(r) { return r.Domain === d && (r.AES256Only === 'True' || r.AES256Only === 'true'); }).length;
+    var pct = tot > 0 ? Math.round((aes / tot) * 100) : 0;
+    var col = pct >= 80 ? '#22c55e' : pct >= 40 ? '#f59e0b' : '#ef4444';
+    return '<div style="margin-bottom:10px">' +
+             '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">' +
+               '<span style="color:#374151;font-family:\'Courier New\',monospace">' + esc(d) + '</span>' +
+               '<span style="font-weight:600;color:' + col + '">' + pct + '%</span>' +
+             '</div>' +
+             '<div class="prog-bar"><div class="prog-fill" style="width:' + pct + '%;background:' + col + '"></div></div>' +
+           '</div>';
+  }).join('');
+}
+
+// ---------------------------------------------------------------------------
+// Domain breakdown cards
+// ---------------------------------------------------------------------------
+function renderDomainCards() {
+  var domains = Array.from(new Set(accountData.map(function(r) { return r.Domain; }).filter(Boolean))).sort();
+  document.getElementById('domainGrid').innerHTML = domains.map(function(d) {
+    var tot  = accountData.filter(function(r)  { return r.Domain === d; }).length;
+    var rc4  = rc4Accounts.filter(function(r)  { return r.Domain === d; }).length;
+    var crit = rc4Accounts.filter(function(r)  { return r.Domain === d && r.RiskLevel === 'Critical'; }).length;
+    var aes  = accountData.filter(function(r)  { return r.Domain === d && (r.AES256Only === 'True' || r.AES256Only === 'true'); }).length;
+    var pct  = tot > 0 ? Math.round((rc4 / tot) * 100) : 0;
+    var col  = pct > 60 ? '#ef4444' : pct > 20 ? '#f59e0b' : '#22c55e';
+    return '<div class="domain-mini-card">' +
+             '<div class="domain-mini-name">' + esc(d) + '</div>' +
+             '<div class="domain-mini-stats">' +
+               '<div class="domain-mini-stat"><div class="domain-mini-val">' + tot.toLocaleString() + '</div><div class="domain-mini-lbl">Total</div></div>' +
+               '<div class="domain-mini-stat"><div class="domain-mini-val" style="color:' + col + '">' + rc4.toLocaleString() + '</div><div class="domain-mini-lbl">RC4</div></div>' +
+               '<div class="domain-mini-stat"><div class="domain-mini-val" style="color:#dc2626">' + crit + '</div><div class="domain-mini-lbl">Critical</div></div>' +
+               '<div class="domain-mini-stat"><div class="domain-mini-val" style="color:#16a34a">' + aes + '</div><div class="domain-mini-lbl">AES Only</div></div>' +
+             '</div>' +
+             '<div class="prog-bar-wrap">' +
+               '<div class="prog-bar-lbl"><span>RC4 exposure</span><span style="color:' + col + '">' + pct + '%</span></div>' +
+               '<div class="prog-bar"><div class="prog-fill" style="width:' + pct + '%;background:' + col + '"></div></div>' +
+             '</div>' +
+           '</div>';
+  }).join('');
+}
+
+// ---------------------------------------------------------------------------
+// KDC Event Log section
+// ---------------------------------------------------------------------------
+function renderEventSection() {
+  if (eventLogData.length === 0) {
+    document.getElementById('chartEvents').style.display = 'none';
+    document.getElementById('noEventMsg').style.display  = 'flex';
+    document.getElementById('noEventTableMsg').style.display = 'flex';
+    document.getElementById('topClientsWrap').innerHTML  = '<div class="no-data-msg">No event log data.</div>';
+    return;
+  }
+  document.getElementById('noEventMsg').style.display  = 'none';
+  document.getElementById('noEventTableMsg').style.display = 'none';
+
+  var domains = Array.from(new Set(eventLogData.map(function(r) { return r.Domain; }).filter(Boolean))).sort();
+  destroyChart('chartEvents');
+  charts.chartEvents = new Chart(document.getElementById('chartEvents'), {
+    type: 'bar',
+    data: {
+      labels: domains.map(function(d) { return d.replace(/\..*/, '').toUpperCase(); }),
+      datasets: [{
+        label: 'RC4 Ticket Events',
+        data:  domains.map(function(d) { return eventLogData.filter(function(r) { return r.Domain === d; }).length; }),
+        backgroundColor: '#f59e0b', borderRadius: 3
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { labels: { boxWidth: 12 } } }, scales: { x: { grid: { color: '#f3f4f6' } }, y: { grid: { color: '#f3f4f6' }, beginAtZero: true } } }
+  });
+
+  // Top requesting client IPs — grouped and sorted descending
+  var cc = {};
+  eventLogData.forEach(function(r) {
+    var ip = r.ClientAddress || 'Unknown';
+    cc[ip] = (cc[ip] || 0) + 1;
+  });
+  var top = Object.entries(cc).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 10);
+
+  // HTML escaped before insertion
+  document.getElementById('topClientsWrap').innerHTML =
+    '<table style="width:100%;font-size:12px">' +
+      '<thead><tr>' +
+        '<th style="text-align:left;padding:6px 0;color:#6b7280;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e5e7eb">Client IP</th>' +
+        '<th style="text-align:right;padding:6px 0;color:#6b7280;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e5e7eb">Events</th>' +
+      '</tr></thead>' +
+      '<tbody>' +
+        top.map(function(entry) {
+          return '<tr style="border-bottom:1px solid #f3f4f6">' +
+                   '<td style="padding:6px 0;color:#f59e0b;font-family:\'Courier New\',monospace">' + esc(entry[0]) + '</td>' +
+                   '<td style="padding:6px 0;text-align:right;font-weight:600">' + entry[1].toLocaleString() + '</td>' +
+                 '</tr>';
+        }).join('') +
+      '</tbody>' +
+    '</table>';
+
+  // Event log table — first 100 rows, all fields HTML-escaped
+  document.getElementById('eventTableBody').innerHTML = eventLogData.slice(0, 100).map(function(r) {
+    return '<tr>' +
+      '<td style="color:#6b7280;font-size:11px">'                    + esc((r.TimeCreated || r.AuditTimestamp || '').substring(0, 16)) + '</td>' +
+      '<td class="domain-col">'                                       + esc((r.Domain || '').replace(/\..*/, '')) + '</td>' +
+      '<td>'                                                          + esc(r.AccountName   || '—') + '</td>' +
+      '<td>'                                                          + esc(r.ServiceName   || '—') + '</td>' +
+      '<td style="font-family:\'Courier New\',monospace;color:#f59e0b">' + esc(r.ClientAddress || '—') + '</td>' +
+      '<td><span class="badge badge-rc4">'                           + esc(r.TicketEncType  || '0x17') + '</span></td>' +
+    '</tr>';
+  }).join('');
+}
+
+// ---------------------------------------------------------------------------
+// Remediation plan — data-driven action cards with sequencing guidance.
+// All action text and PowerShell commands are static (not derived from CSV data)
+// so no escaping is required here. Counts injected are integers only.
+// ---------------------------------------------------------------------------
+function renderActions() {
+  var spnRC4  = rc4Accounts.filter(function(r) {
+    // Kerberoastable SPNs: User and ServiceAccount objects only.
+    // Computer accounts are excluded — machine passwords are 128-char random
+    // and are not practically crackable via Kerberoasting.
+    return (r.HasSPN === 'True' || r.HasSPN === 'true') &&
+           (r.ObjectType === 'User' ||
+            r.ObjectType === 'Service Account (User)' ||
+            r.ObjectType === 'gMSA');
+  }).length;
+  var critical = rc4Accounts.filter(function(r) { return r.RiskLevel === 'Critical'; }).length;
+  var high     = rc4Accounts.filter(function(r) { return r.RiskLevel === 'High'; }).length;
+  var userRC4  = rc4Accounts.filter(function(r) { return r.ObjectType === 'User'; }).length;
+  var compRC4  = rc4Accounts.filter(function(r) { return r.ObjectType === 'Computer'; }).length;
+  var svcRC4   = rc4Accounts.filter(function(r) { return r.ObjectType === 'Service Account (User)'; }).length;
+  var gmsaRC4  = rc4Accounts.filter(function(r) { return r.ObjectType === 'gMSA'; }).length;
+  var domains  = Array.from(new Set(accountData.map(function(r) { return r.Domain; }).filter(Boolean)));
+
+  var seqNote =
+    '<div style="background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;' +
+    'border-radius:6px;padding:14px 16px;margin-bottom:16px;grid-column:1/-1">' +
+      '<div style="font-weight:700;color:#92400e;margin-bottom:6px;font-size:13px">' +
+        '&#9888; Critical Execution Sequence — Read Before Acting' +
+      '</div>' +
+      '<div style="font-size:12px;color:#78350f;line-height:1.8">' +
+        '<strong>Do not enforce the GPO Kerberos restriction until all accounts have been updated AND passwords reset.</strong> ' +
+        'Enforcing AES-only via GPO before account remediation is complete will cause immediate Kerberos authentication failures ' +
+        'for any service or user still relying on RC4.<br>' +
+        'Mandatory order: <strong>1 &rarr; Update account enc types</strong> &nbsp;|&nbsp; ' +
+        '<strong>2 &rarr; Reset passwords</strong> &nbsp;|&nbsp; ' +
+        '<strong>3 &rarr; Validate AES tickets issued (Event 4769 volume drops)</strong> &nbsp;|&nbsp; ' +
+        '<strong>4 &rarr; Perform double krbtgt reset</strong> &nbsp;|&nbsp; ' +
+        '<strong>5 &rarr; Push GPO enforcement</strong>.<br>' +
+        'Run the full sequence on the smallest domain first as a pilot before rolling out forest-wide.' +
+      '</div>' +
+    '</div>';
+
+  var actions = [
+    {
+      p: 'p1', lbl: 'P1 \u2014 IMMEDIATE', seq: 'Step 1 of 5',
+      title: 'Remediate ' + critical + ' Critical + ' + high + ' High Risk Accounts (SPNs &amp; Admin)',
+      body: '<strong>' + critical + ' Critical-risk accounts</strong> (service accounts with SPNs and RC4 enabled) are ' +
+            'directly exploitable via Kerberoasting \u2014 an attacker can request a service ticket offline without elevated ' +
+            'privilege and crack the RC4 hash. A further <strong>' + high + ' High-risk accounts</strong> (adminCount=1 with RC4) ' +
+            'must also be remediated immediately.<br><br>' +
+            'Set <strong>msDS-SupportedEncryptionTypes = 24 (AES128 + AES256)</strong> on all accounts, then ' +
+            '<strong>immediately reset the password</strong> to force generation of new AES Kerberos hashes \u2014 changing ' +
+            'the attribute alone is not sufficient, the password hash must be re-derived.<br><br>' +
+            'gMSAs (' + gmsaRC4 + ' found) use <code>Set-ADServiceAccount</code>, not <code>Set-ADUser</code>. Run per-domain ' +
+            'with <code>-Server</code>. Rollback if needed: set enc type back to 0 (inherits default) on affected account.',
+      cmd: '# Run once per domain, replacing $dc with each domain\'s PDC FQDN\n' +
+           '$dc = "DC-PDC01.corp.internal"  # change per domain\n\n' +
+           '# Step 1a: Service accounts (User objects) with SPNs\n' +
+           '# Use -LDAPFilter, not -Filter with -ne $null (invalid AD syntax)\n' +
+           'Get-ADUser -LDAPFilter "(servicePrincipalName=*)" -Server $dc `\n' +
+           '    -Properties msDS-SupportedEncryptionTypes, ServicePrincipalNames |\n' +
+           '  Where-Object { ($_.\'msDS-SupportedEncryptionTypes\' -eq 0) -or\n' +
+           '                 ($_.\'msDS-SupportedEncryptionTypes\' -band 4) } |\n' +
+           '  ForEach-Object {\n' +
+           '    Set-ADUser $_ -Replace @{"msDS-SupportedEncryptionTypes" = 24} -Server $dc\n' +
+           '    Set-ADUser $_ -ChangePasswordAtLogon $true -Server $dc\n' +
+           '    Write-Host "Updated (user/svc): $($_.SamAccountName)"\n' +
+           '  }\n\n' +
+           '# Step 1b: gMSAs require Set-ADServiceAccount\n' +
+           'Get-ADServiceAccount -Filter * -Server $dc `\n' +
+           '    -Properties msDS-SupportedEncryptionTypes |\n' +
+           '  Where-Object { ($_.\'msDS-SupportedEncryptionTypes\' -eq 0) -or\n' +
+           '                 ($_.\'msDS-SupportedEncryptionTypes\' -band 4) } |\n' +
+           '  ForEach-Object {\n' +
+           '    Set-ADServiceAccount $_ -Replace @{"msDS-SupportedEncryptionTypes" = 24} -Server $dc\n' +
+           '    Write-Host "Updated (gMSA): $($_.SamAccountName)"\n' +
+           '  }\n\n' +
+           '# Step 1c: Privileged accounts (adminCount=1) without SPNs\n' +
+           'Get-ADUser -LDAPFilter "(&(adminCount=1)(!(servicePrincipalName=*)))" -Server $dc `\n' +
+           '    -Properties msDS-SupportedEncryptionTypes |\n' +
+           '  Where-Object { ($_.\'msDS-SupportedEncryptionTypes\' -eq 0) -or\n' +
+           '                 ($_.\'msDS-SupportedEncryptionTypes\' -band 4) } |\n' +
+           '  ForEach-Object {\n' +
+           '    Set-ADUser $_ -Replace @{"msDS-SupportedEncryptionTypes" = 24} -Server $dc\n' +
+           '    Set-ADUser $_ -ChangePasswordAtLogon $true -Server $dc\n' +
+           '    Write-Host "Updated (admin): $($_.SamAccountName)"\n' +
+           '  }'
+    },
+    {
+      p: 'p1', lbl: 'P1 \u2014 IMMEDIATE', seq: 'Step 2 of 5',
+      title: 'Verify AES Tickets + Perform Double krbtgt Password Reset',
+      body: 'After updating account enc types and resetting passwords, <strong>validate that Kerberos is issuing AES tickets</strong> ' +
+            'before proceeding. Monitor Event 4769 on PDC Emulators \u2014 TicketEncryptionType should shift from ' +
+            '<code>0x17</code> (RC4) to <code>0x12</code> (AES256) or <code>0x11</code> (AES128).<br><br>' +
+            '<strong>Double krbtgt password reset is mandatory.</strong> Existing RC4 Kerberos tickets remain valid until ' +
+            'they expire naturally (up to 10 hours, MaxTicketAge default). To invalidate all previously issued RC4 ' +
+            'tickets, the krbtgt account password must be reset <em>twice</em> \u2014 once to invalidate old tickets, ' +
+            'and a second time after full AD replication to invalidate any tickets issued during the first reset window. ' +
+            'Wait for replication across all sites between resets (verify with <code>repadmin /showrepl</code>). ' +
+            'Perform in each domain separately.',
+      cmd: '# Verify AES tickets are being issued (run on PDC)\n' +
+           '# Look for TicketEncryptionType 0x12 (AES256) replacing 0x17 (RC4)\n' +
+           'Get-WinEvent -FilterHashtable @{LogName=\'Security\'; Id=4769} -MaxEvents 100 |\n' +
+           '  ForEach-Object { ([xml]$_.ToXml()).Event.EventData.Data } |\n' +
+           '  Where-Object { $_.Name -eq \'TicketEncryptionType\' } |\n' +
+           '  Group-Object \'#text\' | Select Name, Count\n\n' +
+           '# Double krbtgt reset (run per domain, replacing $dc)\n' +
+           '# Reset 1: invalidates tickets issued before this point\n' +
+           '$newPwd1 = ConvertTo-SecureString -AsPlainText (New-Guid).ToString() -Force\n' +
+           'Set-ADAccountPassword (Get-ADUser krbtgt -Server $dc) -Reset -NewPassword $newPwd1 -Server $dc\n' +
+           'Write-Host "krbtgt reset 1 complete: $(Get-Date)"\n\n' +
+           '# Wait for full AD replication before reset 2\n' +
+           '# Run: repadmin /syncall /AdeP  then verify with: repadmin /showrepl\n\n' +
+           '# Reset 2: invalidates any tickets issued between reset 1 and replication\n' +
+           '$newPwd2 = ConvertTo-SecureString -AsPlainText (New-Guid).ToString() -Force\n' +
+           'Set-ADAccountPassword (Get-ADUser krbtgt -Server $dc) -Reset -NewPassword $newPwd2 -Server $dc\n' +
+           'Write-Host "krbtgt reset 2 complete: $(Get-Date). All RC4 tickets now invalid."'
+    },
+    {
+      p: 'p2', lbl: 'P2 \u2014 SHORT TERM', seq: 'Step 3 of 5',
+      title: 'Bulk-Update ' + userRC4.toLocaleString() + ' RC4-Enabled User Accounts',
+      body: 'Process in batches by OU and domain. <strong>After setting the enc type attribute, users must change their ' +
+            'password</strong> for new AES Kerberos hashes to be generated \u2014 the attribute change alone does not update ' +
+            'existing password hashes. Use <code>-ChangePasswordAtLogon $true</code> or a forced password reset cycle.<br><br>' +
+            '<strong>Pilot on the smallest domain first</strong> before rolling out to large domains. ' +
+            'Disabled accounts should have enc type updated but do not require a password reset.<br><br>' +
+            'The filter below correctly targets mask=0 (inherits default, includes RC4) and accounts with bit 2 set ' +
+            '(RC4-HMAC explicitly enabled). It will not incorrectly touch AES-only accounts \u2014 unlike a <code>-lt 24</code> ' +
+            'filter which also matches AES128-only (mask=8) and AES256-only (mask=16).',
+      cmd: '# Run per domain, replacing $dc with each domain\'s PDC FQDN\n' +
+           '$dc = "DC-PDC01.corp.internal"\n\n' +
+           '# Correct RC4 filter: mask=0 (inherits default) OR bit 2 set (RC4 explicit)\n' +
+           'Get-ADUser -Filter {Enabled -eq $True} -Server $dc `\n' +
+           '    -Properties msDS-SupportedEncryptionTypes |\n' +
+           '  Where-Object { ($_.\'msDS-SupportedEncryptionTypes\' -eq 0) -or\n' +
+           '                 ($_.\'msDS-SupportedEncryptionTypes\' -band 4) } |\n' +
+           '  ForEach-Object {\n' +
+           '    Set-ADUser $_ -Replace @{"msDS-SupportedEncryptionTypes" = 24} -Server $dc\n' +
+           '    Set-ADUser $_ -ChangePasswordAtLogon $true -Server $dc\n' +
+           '  }\n\n' +
+           '# Disabled accounts: update enc type only, no password reset needed\n' +
+           'Get-ADUser -Filter {Enabled -eq $False} -Server $dc `\n' +
+           '    -Properties msDS-SupportedEncryptionTypes |\n' +
+           '  Where-Object { ($_.\'msDS-SupportedEncryptionTypes\' -eq 0) -or\n' +
+           '                 ($_.\'msDS-SupportedEncryptionTypes\' -band 4) } |\n' +
+           '  Set-ADUser -Replace @{"msDS-SupportedEncryptionTypes" = 24} -Server $dc'
+    },
+    {
+      p: 'p2', lbl: 'P2 \u2014 SHORT TERM', seq: 'Step 3 of 5',
+      title: 'Remediate ' + compRC4.toLocaleString() + ' RC4-Enabled Computer Accounts',
+      body: 'Setting <code>msDS-SupportedEncryptionTypes = 24</code> on computer accounts is necessary, but ' +
+            'the new AES session key is only used after the computer\'s next <strong>machine account password rotation ' +
+            '(up to 30 days) or reboot</strong>. For servers, plan a maintenance window reboot. ' +
+            'For workstations, the next restart is sufficient.<br><br>' +
+            '<strong>Identify and exclude legacy OS before bulk enforcement</strong> \u2014 Windows XP, Server 2003, and ' +
+            'non-Microsoft Kerberos clients that do not support AES will fail to authenticate if forced to AES. ' +
+            'Check the Object Detail tab for OperatingSystem values before running.',
+      cmd: '# Check for legacy OS that cannot support AES\n' +
+           'Get-ADComputer -Filter {Enabled -eq $True} -Server $dc `\n' +
+           '    -Properties OperatingSystem |\n' +
+           '  Where-Object { $_.OperatingSystem -match "2003|XP|2000" } |\n' +
+           '  Select Name, OperatingSystem | Sort-Object OperatingSystem\n\n' +
+           '# Set AES on all enabled computers, excluding confirmed legacy OS\n' +
+           'Get-ADComputer -Filter {Enabled -eq $True} -Server $dc `\n' +
+           '    -Properties msDS-SupportedEncryptionTypes, OperatingSystem |\n' +
+           '  Where-Object { ($_.OperatingSystem -notmatch "2003|XP|2000") -and\n' +
+           '                 (($_.\'msDS-SupportedEncryptionTypes\' -eq 0) -or\n' +
+           '                  ($_.\'msDS-SupportedEncryptionTypes\' -band 4)) } |\n' +
+           '  Set-ADComputer -Replace @{"msDS-SupportedEncryptionTypes" = 24} -Server $dc\n\n' +
+           '# Force immediate machine password refresh to avoid 30-day wait (optional)\n' +
+           '# Run on each computer, or deploy via SCCM/Intune:\n' +
+           '# Test-ComputerSecureChannel -Repair -Credential (Get-Credential)'
+    },
+    {
+      p: 'p2', lbl: 'P2 \u2014 PARALLEL WORKSTREAM', seq: 'Start immediately',
+      title: 'Raise Domain &amp; Forest Functional Level to 2016',
+      body: '<strong>This must start now, in parallel with P1/P2 \u2014 not after.</strong> Raising the functional level is a ' +
+            'prerequisite for <code>KrbtgtFullPacSignature</code> enforcement, which is part of Microsoft\'s RC4 ' +
+            'deprecation hardening path (KB5020805). You cannot complete the deprecation journey on 2012 FL.<br><br>' +
+            'Prerequisites: <strong>every DC across all ' + domains.length + ' domains must be running Windows Server 2016 or later</strong> ' +
+            'before the functional level can be raised. With 54 DCs this requires a full OS audit first. Raise Domain ' +
+            'Functional Level (DFL) per domain, then raise Forest Functional Level (FFL) once all domains are updated. ' +
+            'FFL cannot exceed the lowest DFL in the forest. <strong>This process is irreversible.</strong>',
+      cmd: '# Step 1: Audit all DC OS versions across all domains\n' +
+           'Get-ADForest | Select-Object -ExpandProperty Domains | ForEach-Object {\n' +
+           '    Get-ADDomainController -Filter * -Server $_ |\n' +
+           '    Select-Object Name, Domain, OperatingSystem |\n' +
+           '    Sort-Object OperatingSystem\n' +
+           '}\n\n' +
+           '# Step 2: Check current functional levels\n' +
+           'Get-ADForest | Select ForestMode\n' +
+           'Get-ADDomain -Server $dc | Select DomainMode\n\n' +
+           '# Step 3: Raise DFL per domain (all DCs in that domain must be 2016+ first)\n' +
+           'Set-ADDomainMode -Identity "corp.internal" -DomainMode Windows2016Domain\n' +
+           '# Repeat Set-ADDomainMode for each child domain\n\n' +
+           '# Step 4: Raise FFL only after ALL domains are at 2016 DFL\n' +
+           'Set-ADForestMode -Identity "corp.internal" -ForestMode Windows2016Forest\n\n' +
+           '# Verify\n' +
+           'Get-ADForest | Select ForestMode\n' +
+           'Get-ADDomain  | Select DomainMode'
+    },
+    {
+      p: 'p3', lbl: 'P3 \u2014 MEDIUM TERM', seq: 'Step 4 of 5',
+      title: 'Update Domain Object + Trust Objects, then Enforce GPO Kerberos Policy',
+      body: '<strong>Only perform this step after Steps 1\u20133 are complete and validated.</strong> ' +
+            'Three separate actions are required:<br><br>' +
+            '<strong>(A) Domain object attribute:</strong> Sets the default enc type for accounts with no explicit ' +
+            '<code>msDS-SupportedEncryptionTypes</code>. Apply to all ' + domains.length + ' domain objects.<br><br>' +
+            '<strong>(B) GPO enforcement:</strong> Deploy via Computer Configuration &rarr; Windows Settings &rarr; Security Settings &rarr; ' +
+            'Local Policies &rarr; Security Options &rarr; <em>Network security: Configure encryption types allowed for Kerberos</em>. ' +
+            'Link to both the Domain Controllers OU and the domain root. Select AES128 + AES256 only.<br><br>' +
+            '<strong>(C) Trust objects:</strong> Forest and external trusts have their own ' +
+            '<code>msDS-SupportedEncryptionTypes</code> attribute. If not updated, cross-domain Kerberos will continue ' +
+            'to negotiate RC4 even after all accounts are fixed.',
+      cmd: '# (A) Set AES-only on each domain object (run per domain)\n' +
+           'Set-ADObject -Identity (Get-ADDomain -Server $dc).DistinguishedName `\n' +
+           '    -Replace @{"msDS-SupportedEncryptionTypes" = 24} -Server $dc\n\n' +
+           '# (B) GPO path (deploy via GPMC, not direct registry in production):\n' +
+           '# Computer Config > Windows Settings > Security Settings > Local Policies\n' +
+           '# > Security Options > "Network security: Configure encryption types\n' +
+           '#   allowed for Kerberos" = AES128_HMAC_SHA1, AES256_HMAC_SHA1 only\n\n' +
+           '# (C) List and update all trust objects\n' +
+           'Get-ADObject -LDAPFilter "(objectClass=trustedDomain)" `\n' +
+           '    -Properties msDS-SupportedEncryptionTypes, Name |\n' +
+           '    Select Name, msDS-SupportedEncryptionTypes\n\n' +
+           'Get-ADObject -LDAPFilter "(objectClass=trustedDomain)" | ForEach-Object {\n' +
+           '    Set-ADObject $_ -Replace @{"msDS-SupportedEncryptionTypes" = 24}\n' +
+           '    Write-Host "Updated trust: $($_.Name)"\n' +
+           '}'
+    },
+    {
+      p: 'p3', lbl: 'P3 \u2014 MEDIUM TERM', seq: 'Ongoing',
+      title: 'Enable KDC Audit Logging on All DCs via GPO',
+      body: 'Enable <strong>Events 4768</strong> (TGT requests, AS-REQ) <em>and</em> <strong>4769</strong> ' +
+            '(service ticket requests, TGS-REQ) audit logging. Both are needed \u2014 4769 shows RC4 service ticket ' +
+            'requests, but 4768 captures RC4 at the initial TGT stage which 4769 alone will miss.<br><br>' +
+            '<strong>Deploy via GPO to all DCs</strong>, not via direct <code>auditpol</code> per machine. ' +
+            'A per-machine command needs running on all 54 DCs and is overridden by GPO anyway. ' +
+            'Feed Events 4768/4769 with TicketEncryptionType = <code>0x17</code> (RC4) or <code>0x03</code> ' +
+            '(DES) into SIEM/Sentinel as priority alerts post-remediation.',
+      cmd: '# Deploy via GPO (preferred over direct auditpol on 54 DCs):\n' +
+           '# Computer Configuration > Windows Settings > Security Settings\n' +
+           '# > Advanced Audit Policy Configuration > Account Logon\n' +
+           '#   "Audit Kerberos Authentication Service"    = Success, Failure  (Event 4768)\n' +
+           '#   "Audit Kerberos Service Ticket Operations" = Success, Failure  (Event 4769)\n\n' +
+           '# Verify policy is active on a DC\n' +
+           'auditpol /get /subcategory:"Kerberos Authentication Service"\n' +
+           'auditpol /get /subcategory:"Kerberos Service Ticket Operations"\n\n' +
+           '# Query RC4 tickets post-remediation (enc type 0x17 = RC4, 0x12 = AES256)\n' +
+           'Get-WinEvent -FilterHashtable @{LogName=\'Security\'; Id=4769} -MaxEvents 500 |\n' +
+           '  ForEach-Object {\n' +
+           '    $d = ([xml]$_.ToXml()).Event.EventData.Data\n' +
+           '    [PSCustomObject]@{\n' +
+           '      Time     = $_.TimeCreated\n' +
+           '      Account  = ($d | Where-Object Name -eq \'TargetUserName\').\'#text\'\n' +
+           '      Service  = ($d | Where-Object Name -eq \'ServiceName\').\'#text\'\n' +
+           '      EncType  = ($d | Where-Object Name -eq \'TicketEncryptionType\').\'#text\'\n' +
+           '      ClientIP = ($d | Where-Object Name -eq \'IpAddress\').\'#text\'\n' +
+           '    }\n' +
+           '  } | Where-Object { $_.EncType -in \'0x17\',\'0x3\' }'
+    },
+    {
+      p: 'p4', lbl: 'P4 \u2014 ONGOING', seq: 'Step 5 of 5',
+      title: 'Enforce RC4 Block via GPO Registry Policy + Monitor',
+      body: '<strong>Final step \u2014 only after all prior steps validated.</strong> Explicitly block RC4 at the ' +
+            'Kerberos stack level on all DCs and domain members via GPO registry policy. This forces a hard ' +
+            'failure for any remaining RC4 negotiation rather than silently permitting it.<br><br>' +
+            'Deploy via GPO Preferences (not direct registry) so it is consistently applied to all machines.<br>' +
+            'Path: Computer Configuration &rarr; Preferences &rarr; Windows Settings &rarr; Registry.<br>' +
+            'Key: <code>HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\Kerberos\\Parameters</code><br>' +
+            'Value: <code>SupportedEncryptionTypes</code> = <code>0x18</code> (24 decimal, AES128+AES256).<br>' +
+            'Type: <code>REG_DWORD</code> \u2014 must be DWORD, not String.',
+      cmd: '# Deploy via GPO Preference (do not push to individual machines directly)\n' +
+           '# GPO: Computer Config > Preferences > Windows Settings > Registry\n' +
+           '# Key:   HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\Kerberos\\Parameters\n' +
+           '# Value: SupportedEncryptionTypes\n' +
+           '# Type:  REG_DWORD\n' +
+           '# Data:  24 (0x18) = AES128 + AES256 only\n\n' +
+           '# PowerShell equivalent for testing on a single machine only:\n' +
+           '$regPath = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\Kerberos\\Parameters"\n' +
+           'if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }\n' +
+           'Set-ItemProperty -Path $regPath `\n' +
+           '    -Name "SupportedEncryptionTypes" `\n' +
+           '    -Value 24 `\n' +
+           '    -Type DWord\n\n' +
+           '# Verify no RC4 tickets remain (run on each PDC after enforcement)\n' +
+           '$since = (Get-Date).AddHours(-24)\n' +
+           'Get-WinEvent -FilterHashtable @{LogName=\'Security\'; Id=4769; StartTime=$since} `\n' +
+           '    -ErrorAction SilentlyContinue |\n' +
+           '  ForEach-Object { ([xml]$_.ToXml()).Event.EventData.Data } |\n' +
+           '  Where-Object { $_.Name -eq \'TicketEncryptionType\' -and $_.[\'#text\'] -eq \'0x17\' } |\n' +
+           '  Measure-Object | Select-Object -ExpandProperty Count |\n' +
+           '  ForEach-Object { Write-Host "Remaining RC4 tickets in last 24h: $_" }'
+    },
+    {
+      p: 'p4', lbl: 'P4 \u2014 ONGOING', seq: 'Ongoing',
+      title: 'Application Compatibility Review &amp; Legacy System Remediation',
+      body: 'After enforcing AES-only, legacy applications that hardcode RC4 will fail silently or fall back to NTLM. ' +
+            '<strong>Cross-reference the Event 4769 client IP list</strong> from this audit against SCCM/Intune device ' +
+            'inventory to identify culprits before enforcement day.<br><br>' +
+            'Common offenders: Java applications, older Apache web servers, pre-2016 SQL Server Kerberos, ' +
+            'some PAM/RADIUS tools, older Cisco ACS/ISE, MIT Kerberos clients on Linux.<br><br>' +
+            '<strong>Per-account rollback if a specific app breaks:</strong> temporarily set that service account\'s ' +
+            '<code>msDS-SupportedEncryptionTypes = 0</code> (inherits default, re-enables RC4) while the application ' +
+            'is upgraded.',
+      cmd: '# Identify unique client IPs still requesting RC4\n' +
+           'Get-WinEvent -FilterHashtable @{LogName=\'Security\'; Id=4769} -MaxEvents 5000 |\n' +
+           '  ForEach-Object {\n' +
+           '    $d = ([xml]$_.ToXml()).Event.EventData.Data\n' +
+           '    [PSCustomObject]@{\n' +
+           '      EncType  = ($d | Where-Object Name -eq \'TicketEncryptionType\').\'#text\'\n' +
+           '      ClientIP = ($d | Where-Object Name -eq \'IpAddress\').\'#text\'\n' +
+           '      Account  = ($d | Where-Object Name -eq \'TargetUserName\').\'#text\'\n' +
+           '    }\n' +
+           '  } | Where-Object { $_.EncType -eq \'0x17\' } |\n' +
+           '    Group-Object ClientIP | Sort-Object Count -Descending |\n' +
+           '    Select-Object Count, Name | Export-Csv "RC4_ClientIPs.csv" -NoTypeInformation\n\n' +
+           '# Java Kerberos fix: edit krb5.conf (NOT javax.security.auth.useSubjectCredsOnly)\n' +
+           '# /etc/krb5.conf or %WINDIR%\\krb5.ini:\n' +
+           '# [libdefaults]\n' +
+           '#   default_tkt_enctypes = aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96\n' +
+           '#   default_tgs_enctypes = aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96\n' +
+           '#   permitted_enctypes   = aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96\n\n' +
+           '# Per-account rollback while app is being fixed:\n' +
+           'Set-ADUser svc_appname -Replace @{"msDS-SupportedEncryptionTypes" = 0} -Server $dc\n' +
+           '# Restore to AES-only once app is updated:\n' +
+           'Set-ADUser svc_appname -Replace @{"msDS-SupportedEncryptionTypes" = 24} -Server $dc'
+    }
+  ];
+
+  document.getElementById('actionsGrid').innerHTML = seqNote + actions.map(function(a) {
+    return '<div class="action-card ' + a.p + '">' +
+             '<div class="action-header">' +
+               '<div style="display:flex;flex-direction:column;gap:3px">' +
+                 '<div style="display:flex;gap:8px;align-items:center">' +
+                   '<span class="action-pill">' + a.lbl + '</span>' +
+                   '<span style="font-size:10px;color:#9ca3af;font-family:\'Courier New\',monospace">' + a.seq + '</span>' +
+                 '</div>' +
+                 '<div class="action-title">' + a.title + '</div>' +
+               '</div>' +
+             '</div>' +
+             '<div class="action-body">' + a.body + '</div>' +
+             '<div class="action-cmd">' + a.cmd + '</div>' +
+           '</div>';
+  }).join('');
+}
+
+// ---------------------------------------------------------------------------
+// Object detail table — sortable, filterable, paginated
+// ---------------------------------------------------------------------------
+function renderTable() {
+  var domains = Array.from(new Set(rc4Accounts.map(function(r) { return r.Domain; }).filter(Boolean))).sort();
+  var types   = Array.from(new Set(rc4Accounts.map(function(r) { return r.ObjectType; }).filter(Boolean))).sort();
+  var ds = document.getElementById('filterDomain');
+  var ts = document.getElementById('filterType');
+  var rs = document.getElementById('filterRisk');
+
+  domains.forEach(function(d) { var o = document.createElement('option'); o.value = d; o.textContent = d; ds.appendChild(o); });
+  types.forEach(function(t)   { var o = document.createElement('option'); o.value = t; o.textContent = t; ts.appendChild(o); });
+  ['Critical', 'High', 'Medium', 'Low'].forEach(function(r) { var o = document.createElement('option'); o.value = r; o.textContent = r; rs.appendChild(o); });
+
+  document.getElementById('searchInput').addEventListener('input',  applyFilters);
+  ds.addEventListener('change', applyFilters);
+  ts.addEventListener('change', applyFilters);
+  rs.addEventListener('change', applyFilters);
+  applyFilters();
+}
+
+function applyFilters() {
+  var q   = document.getElementById('searchInput').value.toLowerCase();
+  var dom = document.getElementById('filterDomain').value;
+  var typ = document.getElementById('filterType').value;
+  var rsk = document.getElementById('filterRisk').value;
+
+  filteredRows = rc4Accounts.filter(function(r) {
+    if (dom && r.Domain    !== dom) return false;
+    if (typ && r.ObjectType !== typ) return false;
+    if (rsk && r.RiskLevel  !== rsk) return false;
+    if (q) {
+      var haystack = [r.SamAccountName, r.Domain, r.ObjectType, r.SPNs, r.Description].join(' ').toLowerCase();
+      if (haystack.indexOf(q) === -1) return false;
+    }
+    return true;
+  });
+
+  var riskOrder = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+  filteredRows.sort(function(a, b) {
+    if (sortCol === 'RiskLevel') {
+      var av = riskOrder[a.RiskLevel] !== undefined ? riskOrder[a.RiskLevel] : 4;
+      var bv = riskOrder[b.RiskLevel] !== undefined ? riskOrder[b.RiskLevel] : 4;
+      return sortAsc ? av - bv : bv - av;
+    }
+    var av = (a[sortCol] || '').toString();
+    var bv = (b[sortCol] || '').toString();
+    return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+
+  currentPage = 1;
+  renderTablePage();
+}
+
+function renderTablePage() {
+  var start = (currentPage - 1) * PAGE_SIZE;
+  var end   = start + PAGE_SIZE;
+  var page  = filteredRows.slice(start, end);
+  var total = filteredRows.length;
+
+  document.getElementById('tableInfo').textContent =
+    'Showing ' + (start + 1).toLocaleString() + '\u2013' + Math.min(end, total).toLocaleString() +
+    ' of ' + total.toLocaleString() + ' RC4-exposed objects';
+
+  function riskBadge(r) {
+    var cls = { Critical: 'badge-critical', High: 'badge-high', Medium: 'badge-medium', Low: 'badge-low' };
+    return '<span class="badge ' + (cls[r] || 'badge-low') + '">' + esc(r || '\u2014') + '</span>';
+  }
+  function typeBadge(t) {
+    if (!t) return '\u2014';
+    if (t.indexOf('Service') !== -1) return '<span class="badge badge-svc">'     + esc(t) + '</span>';
+    if (t === 'gMSA')                return '<span class="badge badge-gmsa">gMSA</span>';
+    if (t === 'Computer')            return '<span class="badge badge-computer">Computer</span>';
+    return '<span class="badge badge-user">' + esc(t) + '</span>';
+  }
+
+  document.getElementById('tableBody').innerHTML = page.map(function(r) {
+    // AdminCount is a string from CSV; parse to integer before comparison
+    var isAdmin = parseInt(r.AdminCount, 10) > 0;
+    var isEnabled = r.Enabled === 'True' || r.Enabled === 'true';
+    var hasSPN    = r.HasSPN  === 'True' || r.HasSPN  === 'true';
+    return '<tr>' +
+      '<td class="acct-name">'                                         + esc(r.SamAccountName || '\u2014') + '</td>' +
+      '<td class="domain-col">'                                        + esc((r.Domain || '').replace(/\..*/, '')) + '</td>' +
+      '<td>'                                                           + typeBadge(r.ObjectType) + '</td>' +
+      '<td style="color:#dc2626;font-size:11px;font-family:\'Courier New\',monospace">' + esc((r.EncryptionTypes || '').replace(/\|/g, ' \xb7 ')) + '</td>' +
+      '<td>'                                                           + riskBadge(r.RiskLevel) + '</td>' +
+      '<td>' + (hasSPN    ? '<span style="color:#f59e0b;font-weight:700">&#10003;</span>' : '\u2014') + '</td>' +
+      '<td>' + (isAdmin   ? '<span style="color:#dc2626;font-weight:700">&#10003;</span>' : '\u2014') + '</td>' +
+      '<td style="color:#6b7280;font-size:11px">' + esc(r.LastLogonDate ? r.LastLogonDate.substring(0, 10) : '\u2014') + '</td>' +
+      '<td>' + (isEnabled ? '<span style="color:#16a34a">&#9679;</span>' : '<span style="color:#9ca3af">&#9679;</span>') + '</td>' +
+    '</tr>';
+  }).join('');
+
+  // Pagination
+  var pages = Math.ceil(total / PAGE_SIZE);
+  var pg    = document.getElementById('pagination');
+  pg.innerHTML = '';
+  for (var i = 1; i <= Math.min(pages, 10); i++) {
+    var btn = document.createElement('button');
+    btn.className   = 'pg-btn' + (i === currentPage ? ' active' : '');
+    btn.textContent = String(i);
+    btn.setAttribute('data-page', String(i));
+    pg.appendChild(btn);
+  }
+  if (pages > 10) {
+    var ellipsis = document.createElement('span');
+    ellipsis.textContent  = '\u2026' + pages;
+    ellipsis.style.cssText = 'color:#9ca3af;font-size:11px;padding:4px 6px';
+    pg.appendChild(ellipsis);
+  }
+}
+
+// Delegated pagination click handler
+document.getElementById('pagination').addEventListener('click', function(e) {
+  var btn = e.target.closest('[data-page]');
+  if (!btn) return;
+  currentPage = parseInt(btn.getAttribute('data-page'), 10);
+  renderTablePage();
+});
+
+function sortTable(col) {
+  sortAsc = (sortCol === col) ? !sortAsc : false;
+  sortCol = col;
+  renderTablePage();
+}
+
+// ---------------------------------------------------------------------------
+// GPO settings table
+// ---------------------------------------------------------------------------
+function renderGPOTable() {
+  if (gpoData.length === 0) {
+    document.getElementById('noGPOMsg').style.display = 'flex';
+    return;
+  }
+  document.getElementById('noGPOMsg').style.display = 'none';
+  document.getElementById('gpoTableBody').innerHTML = gpoData.map(function(r) {
+    var hasRC4  = r.ReferencesRC4     === 'True' || r.ReferencesRC4     === 'true';
+    var hasAES  = r.ReferencesAES256  === 'True' || r.ReferencesAES256  === 'true';
+    var hasKerb = r.HasKerberosSettings === 'True' || r.HasKerberosSettings === 'true';
+    return '<tr>' +
+      '<td style="font-weight:600">' + esc(r.GPOName || '\u2014') + '</td>' +
+      '<td class="domain-col">'     + esc(r.Domain  || '\u2014') + '</td>' +
+      '<td>' + (hasRC4  ? '<span class="badge badge-rc4">YES</span>' : '<span style="color:#9ca3af">No</span>') + '</td>' +
+      '<td>' + (hasAES  ? '<span class="badge badge-aes">YES</span>' : '<span style="color:#9ca3af">No</span>') + '</td>' +
+      '<td>' + (hasKerb ? '<span style="color:#f59e0b;font-weight:700">&#10003;</span>' : '\u2014') + '</td>' +
+      '<td style="font-size:11px;color:#6b7280">' + esc(r.GPOStatus       || '\u2014') + '</td>' +
+      '<td style="font-size:11px;color:#6b7280">' + esc(r.ModificationTime ? r.ModificationTime.substring(0, 10) : '\u2014') + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+// ---------------------------------------------------------------------------
+// CSV export helpers
+// ---------------------------------------------------------------------------
+function dlCSV(rows, name) {
+  var csv  = Papa.unparse(rows);
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  var a    = document.createElement('a');
+  a.href   = URL.createObjectURL(blob);
+  a.setAttribute('download', name);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+function exportFiltered()   { dlCSV(filteredRows, 'RC4_Filtered.csv');   }
+function exportAll()        { dlCSV(rc4Accounts,  'RC4_All_Exposed.csv'); }
+function exportSummaryCSV() { dlCSV(summaryData,  'RC4_Summary.csv');    }
+function exportEventCSV()   { dlCSV(eventLogData, 'RC4_EventLog.csv');   }
+function exportGPOCSV()     { dlCSV(gpoData,      'RC4_GPO.csv');        }
+
+function exportChart(type) {
+  var map = {
+    domain:  rc4Accounts,
+    risk:    rc4Accounts,
+    type:    rc4Accounts,
+    enctype: accountData,
+    domain2: rc4Accounts
+  };
+  dlCSV(map[type] || rc4Accounts, 'RC4_Export_' + type + '.csv');
+}
+
+function exportKPI(key) {
+  var map = {
+    total:    accountData,
+    rc4:      rc4Accounts,
+    clean:    accountData.filter(function(r) { return r.RC4Enabled !== 'True' && r.RC4Enabled !== 'true'; }),
+    critical: rc4Accounts.filter(function(r) { return r.RiskLevel === 'Critical'; }),
+    aes:      accountData.filter(function(r) { return r.AES256Only === 'True' || r.AES256Only === 'true'; }),
+    pct:      rc4Accounts
+  };
+  dlCSV(map[key] || rc4Accounts, 'RC4_KPI_' + key + '.csv');
+}
+
+// ---------------------------------------------------------------------------
+// Demo data loader — used for testing without a real audit CSV
+// Uses corp.internal domain names to match the sample dataset
+// ---------------------------------------------------------------------------
+function loadDemoData() {
+  var domains = [
+    'corp.internal', 'emea.corp.internal', 'apac.corp.internal', 'amer.corp.internal',
+    'mea.corp.internal', 'latam.corp.internal', 'africa.corp.internal', 'india.corp.internal'
+  ];
+  var types = ['User', 'User', 'User', 'Computer', 'Computer', 'Service Account (User)', 'Service Account (User)', 'gMSA'];
+  var rows  = [];
+  var ts    = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+  for (var i = 0; i < 600; i++) {
+    var d   = domains[i % domains.length];
+    var t   = types[Math.floor(Math.random() * types.length)];
+    var rc4 = Math.random() > 0.38;
+    var spn = rc4 && t.indexOf('Service') !== -1 && Math.random() > 0.3;
+    var adm = Math.random() > 0.92 ? 1 : 0;
+    var enc = rc4 ? (Math.random() > 0.5 ? 'RC4-HMAC' : 'Inherits-Default(includes-RC4)') : 'AES128|AES256';
+    var risk = 'Low';
+    if (rc4 && spn) risk = 'Critical';
+    else if (rc4 && adm) risk = 'High';
+    else if (rc4) risk = 'Medium';
+    rows.push({
+      RecordType: 'Account', Domain: d,
+      SamAccountName: t.substring(0, 3).toLowerCase() + String(i).padStart(4, '0'),
+      ObjectType: t, EncryptionTypes: enc,
+      RC4Enabled:  rc4 ? 'True' : 'False',
+      AES256Only:  (!rc4 && enc === 'AES128|AES256') ? 'True' : 'False',
+      Enabled:     Math.random() > 0.08 ? 'True' : 'False',
+      HasSPN:      spn ? 'True' : 'False',
+      AdminCount:  String(adm),
+      RiskLevel:   risk, LastLogonDate: ts, AuditTimestamp: ts
+    });
+  }
+  domains.forEach(function(d) {
+    var da = rows.filter(function(r) { return r.Domain === d; });
+    rows.push({
+      RecordType: 'Summary', Domain: d,
+      TotalObjects: String(da.length),
+      RC4ExposedObjects: String(da.filter(function(r) { return r.RC4Enabled === 'True'; }).length),
+      AuditTimestamp: ts
+    });
+  });
+  for (var j = 0; j < 40; j++) {
+    rows.push({
+      RecordType: 'EventLog', Domain: domains[j % domains.length],
+      ClientAddress: '10.' + (j % 255) + '.' + (j % 100) + '.' + (j % 50),
+      AccountName: 'svc' + j, ServiceName: 'krbtgt', TicketEncType: '0x17', AuditTimestamp: ts
+    });
+  }
+  rows.push({
+    RecordType: 'GPO', Domain: domains[0], GPOName: 'Default Domain Policy',
+    ReferencesRC4: 'True', ReferencesAES256: 'False', HasKerberosSettings: 'True',
+    GPOStatus: 'AllSettingsEnabled', ModificationTime: ts, AuditTimestamp: ts
+  });
+  processData(rows, 'Demo_Data.csv');
+}
+</script>
+</body>
+</html>
