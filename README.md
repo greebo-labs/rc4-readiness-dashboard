@@ -20,20 +20,6 @@ The script audits:
 
 It then writes a set of CSV outputs, including a master CSV that can be opened in the dashboard.
 
-## Repository layout
-
-```text
-.
-├── Invoke-RC4Audit.ps1
-├── RC4_Dashboard.html
-├── README.md
-├── .gitignore
-└── docs
-    ├── README.md
-    ├── PUBLISH-TO-GITHUB.md
-    └── TROUBLESHOOTING.md
-```
-
 ## Requirements
 
 ### PowerShell / AD audit
