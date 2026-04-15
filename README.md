@@ -20,6 +20,8 @@ The script audits:
 
 It then writes a set of CSV outputs, including a master CSV that can be opened in the dashboard.
 
+Use at own risk!
+
 ## Requirements
 
 ### PowerShell / AD audit
